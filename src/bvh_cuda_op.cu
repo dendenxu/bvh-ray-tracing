@@ -121,8 +121,8 @@ public:
 
 template <typename T>
 __host__ __device__ bool rayToTriangleIntersect(
-                vec3<T> p, // starting point
-                vec3<T> d, // ray direction
+                vec3<T> ori, // starting point
+                vec3<T> dir, // ray direction
                 TrianglePtr<T> tri_ptr,
                 vec3<T> *closest_point,
                 vec3<T> *closest_bc)
@@ -131,31 +131,30 @@ __host__ __device__ bool rayToTriangleIntersect(
     vec3<T> v0 = tri_ptr->v0;
     vec3<T> v1 = tri_ptr->v1;
     vec3<T> v2 = tri_ptr->v2;
-    vec3<T> edge1 = v1 - v0;
-    vec3<T> edge2 = v2 - v0;
 
-    // define temporary variable
-    T u, v, t;
-    T det, inv_det;
-    vec3<T> avec, bvec, tvec;
+    vec3<T> v0v1 = v1 - v0;
+    vec3<T> v0v2 = v2 - v0;
+    vec3<T> pvec = cross(dir, v0v2);
+    T det = dot(v0v1, pvec);
 
-    avec = cross(d, edge2);
-    det = dot(avec, edge1);
-    tvec = p - v0;
-    u = dot(avec, tvec);
-    bvec = cross(tvec, edge1);
-    v = dot(bvec, d);
+    // ray and triangle are parallel if det is close to 0
+    if (abs(det) < EPSILON) return false;
 
-    inv_det = 1.0 / det;
-    t = dot(bvec, edge2);
-    t *= inv_det;
-    u *= inv_det;
-    v *= inv_det;
+    float invDet = 1 / det;
+
+    vec3<T> tvec = ori - v0;
+    T u = dot(tvec, pvec) * invDet;
+    if (u < 0 || u > 1) return false;
+
+    vec3<T> qvec = cross(tvec, v0v1);
+    T v = dot(dir, qvec) * invDet;
+    if (v < 0 || u + v > 1) return false;
+    T t = dot(v0v2, qvec) * invDet;
 
     // update only when the results are valid
-    *closest_point = v0 + u * edge1 + v * edge2;
+    *closest_point = v0 + u * v0v1 + v * v0v2;
     *closest_bc = make_vec3<T>(static_cast<T>(1 - u - v), static_cast<T>(u), static_cast<T>(v));
-    return (t >= 0) && (u >= 0) && (v >= 0) && (1 - u - v >= 0);
+    return true;
 }
 
 template <typename T>
@@ -526,6 +525,11 @@ __global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_dire
       closest_points[idx] = closest_point;
       closest_faces[idx] = closest_face;
       closest_bcs[idx] = closest_bc;
+    } else {
+      distances[idx] = -1;
+      closest_points[idx] = make_vec3<T>(0, 0, 0);
+      closest_faces[idx] = -1;
+      closest_bcs[idx] = make_vec3<T>(0, 0, 0);
     }
 
   }
