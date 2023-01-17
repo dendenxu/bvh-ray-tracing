@@ -119,6 +119,53 @@ public:
   }
 };
 
+#define EPSILON 0.000001
+template <typename T>
+__host__ __device__ int rayToTriangleDistance(
+                vec3<T> p, // starting point
+                vec3<T> d, // ray direction
+                TrianglePtr<T> tri_ptr
+                vec3<T> *closest_point
+                vec3<T> *closest_bc)
+{
+    vec3<T> v0 = tri_ptr->v0;
+    vec3<T> v1 = tri_ptr->v1;
+    vec3<T> v2 = tri_ptr->v2;
+    vec3<T> edge1 = v1 - v0;
+    vec3<T> edge2 = v2 - v0;
+
+    T u, v, t;
+    T direction[3], avec[3], bvec[3], tvec[3], det, inv_det;
+    cross(d, edge2, avec);
+    dot(avec, edge1, det);
+    if (det > EPSILON) {
+        subtract(p, v0, tvec);
+        dot(avec, tvec, u);
+        cross(tvec, edge1, bvec);
+        dot(bvec, d, v);
+    }
+    else if (det < -EPSILON) {
+        subtract(p, v0, tvec);
+        dot(avec, tvec, u);
+        cross(tvec, edge1, bvec);
+        dot(bvec, d, v);
+    } else {}
+    inv_det = 1.0 / det;
+    dot(bvec, edge2, t);
+    t *= inv_det;
+    u *= inv_det;
+    v *= inv_det;
+
+    *closest_point = v0 + u * edge1 + v * edge2;
+    *closest_bc = make_vec3<T>(static_cast<T>(1 - u - v), static_cast<T>(u), static_cast<T>(v));
+
+    if ((t >= 0) && (u >= 0) && (v >= 0) && (1 - u - v >= 0)) {
+      return dot(p - *closest_point, p - *closest_point);
+    } else {
+      return MAX_DISTANCE;
+    }
+}
+
 template <typename T>
 __host__ __device__ T pointToTriangleDistance(vec3<T> p,
                                               TrianglePtr<T> tri_ptr) {
@@ -259,6 +306,76 @@ __device__
   return (bbox1.min_t.x <= bbox2.max_t.x) && (bbox1.max_t.x >= bbox2.min_t.x) &&
          (bbox1.min_t.y <= bbox2.max_t.y) && (bbox1.max_t.y >= bbox2.min_t.y) &&
          (bbox1.min_t.z <= bbox2.max_t.z) && (bbox1.max_t.z >= bbox2.min_t.z);
+}
+
+template <typename T, int StackSize = 32>
+__device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirection, BVHNodePtr<T> root,
+                              long *closest_face, vec3<T> *closest_bc,
+                              vec3<T> *closestPoint) {
+  BVHNodePtr<T> stack[StackSize];
+  BVHNodePtr<T> *stackPtr = stack;
+  *stackPtr++ = nullptr; // push
+
+  BVHNodePtr<T> node = root;
+  T closest_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
+
+  do {
+    // Check each child node for overlap.
+    BVHNodePtr<T> childL = node->left;
+    BVHNodePtr<T> childR = node->right;
+
+    T distance_left = rayToAABBIntersect<T>(queryPoint, rayDirection, childL->bbox);
+    T distance_right = rayToAABBIntersect<T>(queryPoint, rayDirection, childR->bbox);
+
+    bool checkL = distance_left < closest_distance;
+    bool checkR = distance_right < closest_distance;
+
+    if (checkL && childL->isLeaf()) {
+      // If  the child is a leaf then
+      TrianglePtr<T> tri_ptr = childL->tri_ptr;
+      vec3<T> curr_clos_point;
+      vec3<T> curr_closest_bc;
+
+      T distance_left = rayToTriangleDistance<T>(
+          queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
+      if (distance_left <= closest_distance) {
+        closest_distance = distance_left;
+        *closest_face = childL->idx;
+        *closestPoint = curr_clos_point;
+        *closest_bc = curr_closest_bc;
+      }
+    }
+
+    if (checkR && childR->isLeaf()) {
+      // If  the child is a leaf then
+      TrianglePtr<T> tri_ptr = childR->tri_ptr;
+      vec3<T> curr_clos_point;
+      vec3<T> curr_closest_bc;
+
+      T distance_right = rayToTriangleDistance<T>(
+          queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
+      if (distance_right <= closest_distance) {
+        closest_distance = distance_right;
+        *closest_face = childR->idx;
+        *closestPoint = curr_clos_point;
+        *closest_bc = curr_closest_bc;
+      }
+    }
+    // Query overlaps an internal node => traverse.
+    bool traverseL = (checkL && !childL->isLeaf());
+    bool traverseR = (checkR && !childR->isLeaf());
+
+    if (!traverseL && !traverseR) {
+      node = *--stackPtr; // pop
+    } else {
+      node = (traverseL) ? childL : childR;
+      if (traverseL && traverseR) {
+        *stackPtr++ = childR; // push
+      }
+    }
+  } while (node != nullptr);
+
+  return closest_distance;
 }
 
 template <typename T, int StackSize = 32>
@@ -403,6 +520,31 @@ __device__ T traverseBVH(const vec3<T> &queryPoint, BVHNodePtr<T> root,
 }
 
 template <typename T, int QueueSize = 32>
+__global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_directions, T *distances,
+                                        vec3<T> *closest_points,
+                                        long *closest_faces,
+                                        vec3<T> *closest_bcs,
+                                        BVHNodePtr<T> root, int num_points) {
+  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < num_points;
+       idx += blockDim.x * gridDim.x) {
+    vec3<T> query_point = query_points[idx];
+
+    long closest_face;
+    vec3<T> closest_bc;
+    vec3<T> closest_point;
+
+    T closest_distance = raytraceBVHStack<T, QueueSize>(
+          query_point, root, &closest_face, &closest_bc, &closest_point);
+
+    distances[idx] = closest_distance;
+    closest_points[idx] = closest_point;
+    closest_faces[idx] = closest_face;
+    closest_bcs[idx] = closest_bc;
+  }
+  return;
+}
+
+template <typename T, int QueueSize = 32>
 __global__ void findNearestNeighbor(vec3<T> *query_points, T *distances,
                                     vec3<T> *closest_points,
                                     long *closest_faces,
@@ -471,6 +613,28 @@ __device__
 }
 
 template <typename T>
+__global__ void ComputePointMortonCodes(vec3<T> *points, vec3<T> *directions, vec3<T> *in_points, vec3<T> *in_directions,
+                                        int num_points,
+                                        MortonCode *morton_codes) {
+  AABB<T> scene_bb(-1, -1, -1, 1, 1, 1);
+  for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < num_points;
+       idx += blockDim.x * gridDim.x) {
+    // Fetch the current triangle
+    vec3<T> point = in_points[idx];
+    vec3<T> direction = directions[idx];
+
+    T x = (point.x - scene_bb.min_t.x) / (scene_bb.max_t.x - scene_bb.min_t.x);
+    T y = (point.y - scene_bb.min_t.y) / (scene_bb.max_t.y - scene_bb.min_t.y);
+    T z = (point.z - scene_bb.min_t.z) / (scene_bb.max_t.z - scene_bb.min_t.z);
+
+    morton_codes[idx] = morton3D<T>(x, y, z);
+    points[idx] = point; // this is an implicit copy
+    directions[idx] = direction; // this is an implicit copy
+  }
+  return;
+}
+
+template <typename T>
 __global__ void ComputePointMortonCodes(vec3<T> *points, vec3<T> *in_points,
                                         int num_points,
                                         MortonCode *morton_codes) {
@@ -485,7 +649,7 @@ __global__ void ComputePointMortonCodes(vec3<T> *points, vec3<T> *in_points,
     T z = (point.z - scene_bb.min_t.z) / (scene_bb.max_t.z - scene_bb.min_t.z);
 
     morton_codes[idx] = morton3D<T>(x, y, z);
-    points[idx] = point;
+    points[idx] = point; // this is an implicit copy
   }
   return;
 }
@@ -878,7 +1042,7 @@ void buildBVH(BVHNodePtr<T> internal_nodes, BVHNodePtr<T> leaf_nodes,
 
 
 void bvh_distance_queries_kernel(
-    const torch::Tensor &triangles, const torch::Tensor &points,
+    const torch::Tensor &triangles, const torch::Tensor &points, const torch::Tensor &directions,
     torch::Tensor *distances, torch::Tensor *closest_points,
     torch::Tensor *closest_faces, torch::Tensor *closest_bcs,
     int queue_size = 128, bool sort_points_by_morton = true) {
@@ -915,6 +1079,11 @@ void bvh_distance_queries_kernel(
 
         vec3<scalar_t> *morton_sorted_points_ptr;
         cudaMalloc((void **)&morton_sorted_points_ptr,
+                   num_points * sizeof(vec3<scalar_t>));
+        cudaCheckError();
+
+        vec3<scalar_t> *morton_sorted_directions_ptr;
+        cudaMalloc((void **)&morton_sorted_directions_ptr,
                    num_points * sizeof(vec3<scalar_t>));
         cudaCheckError();
 
@@ -960,6 +1129,8 @@ void bvh_distance_queries_kernel(
 #endif
           vec3<scalar_t> *points_ptr =
               (vec3<scalar_t> *)points.data<scalar_t>() + num_points * bidx;
+          vec3<scalar_t> *directions_ptr =
+              (vec3<scalar_t> *)directions.data<scalar_t>() + num_points * bidx;
           thrust::device_vector<int> point_ids(num_points);
           thrust::sequence(point_ids.begin(), point_ids.end());
 
@@ -971,7 +1142,7 @@ void bvh_distance_queries_kernel(
 #endif
             ComputePointMortonCodes<scalar_t><<<gridSize, NUM_THREADS>>>(
                 // morton_sorted_points.data().get(), points_ptr, num_points,
-                morton_sorted_points_ptr, points_ptr, num_points,
+                morton_sorted_points_ptr, morton_sorted_directions_ptr, points_ptr, num_points,
                 morton_codes.data().get());
             cudaCheckError();
             cudaDeviceSynchronize();
@@ -984,48 +1155,52 @@ void bvh_distance_queries_kernel(
                       << milliseconds << " (ms)" << std::endl;
 #endif
 
-            thrust::device_ptr<vec3<scalar_t>> dev_ptr =
+            thrust::device_ptr<vec3<scalar_t>> dev_points_ptr =
+                thrust::device_pointer_cast(morton_sorted_points_ptr);
+
+            thrust::device_ptr<vec3<scalar_t>> dev_directions_ptr =
                 thrust::device_pointer_cast(morton_sorted_points_ptr);
 
             thrust::sort_by_key(morton_codes.begin(), morton_codes.end(),
                                 thrust::make_zip_iterator(thrust::make_tuple(
-                                    point_ids.begin(), dev_ptr)));
+                                    point_ids.begin(), dev_points_ptr, dev_directions_ptr)));
             cudaCheckError();
 
             points_ptr = morton_sorted_points_ptr;
+            directions_pts = morton_sorted_directions_ptr;
           }
 
 #ifdef BVH_PROFILING
           cudaProfilerStart();
 #endif
           if (queue_size == 32) {
-            findNearestNeighbor<scalar_t, 32><<<gridSize, NUM_THREADS>>>(
-                points_ptr, distances_ptr, closest_points_ptr,
+            findRayMeshIntersection<scalar_t, 32><<<gridSize, NUM_THREADS>>>(
+                points_ptr, directions_ptr, directions_ptr distances_ptr, closest_points_ptr,
                 closest_faces_ptr, closest_bcs_ptr,
                 internal_nodes.data().get(), num_points);
           } else if (queue_size == 64) {
-            findNearestNeighbor<scalar_t, 64><<<gridSize, NUM_THREADS>>>(
-                points_ptr, distances_ptr, closest_points_ptr,
+            findRayMeshIntersection<scalar_t, 64><<<gridSize, NUM_THREADS>>>(
+                points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                 closest_faces_ptr, closest_bcs_ptr,
                 internal_nodes.data().get(), num_points);
           } else if (queue_size == 128) {
-            findNearestNeighbor<scalar_t, 128><<<gridSize, NUM_THREADS>>>(
-                points_ptr, distances_ptr, closest_points_ptr,
+            findRayMeshIntersection<scalar_t, 128><<<gridSize, NUM_THREADS>>>(
+                points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                 closest_faces_ptr, closest_bcs_ptr,
                 internal_nodes.data().get(), num_points);
           } else if (queue_size == 256) {
-            findNearestNeighbor<scalar_t, 256><<<gridSize, NUM_THREADS>>>(
-                points_ptr, distances_ptr, closest_points_ptr,
+            findRayMeshIntersection<scalar_t, 256><<<gridSize, NUM_THREADS>>>(
+                points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                 closest_faces_ptr, closest_bcs_ptr,
                 internal_nodes.data().get(), num_points);
           } else if (queue_size == 512) {
-            findNearestNeighbor<scalar_t, 512><<<gridSize, NUM_THREADS>>>(
-                points_ptr, distances_ptr, closest_points_ptr,
+            findRayMeshIntersection<scalar_t, 512><<<gridSize, NUM_THREADS>>>(
+                points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                 closest_faces_ptr, closest_bcs_ptr,
                 internal_nodes.data().get(), num_points);
           } else if (queue_size == 1024) {
-            findNearestNeighbor<scalar_t, 1024><<<gridSize, NUM_THREADS>>>(
-                points_ptr, distances_ptr, closest_points_ptr,
+            findRayMeshIntersection<scalar_t, 1024><<<gridSize, NUM_THREADS>>>(
+                points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                 closest_faces_ptr, closest_bcs_ptr,
                 internal_nodes.data().get(), num_points);
           }
@@ -1077,5 +1252,6 @@ void bvh_distance_queries_kernel(
         cudaFree(closest_faces_ptr);
         cudaFree(closest_bcs_ptr);
         cudaFree(morton_sorted_points_ptr);
+        cudaFree(morton_sorted_directions_ptr);
       }));
 }

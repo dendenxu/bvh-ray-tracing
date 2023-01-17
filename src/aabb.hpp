@@ -113,5 +113,65 @@ __host__ __device__ T pointToAABBDistance(vec3<T> point, const AABB<T>& bbox ) {
   return diff_x * diff_x + diff_y * diff_y + diff_z * diff_z;
 }
 
+#define MAX_DISTANCE std::is_same<T, float>::value ? FLT_MAX : DBL_MAX
+
+template <typename T>
+__forceinline__
+__host__ __device__ T rayToAABBIntersect(vec3<T> point, vec3<T> direction, const AABB<T>& bbox ) {
+
+  T tmin = (bbox.min_t.x - point.x) / direction.x;
+  T tmax = (bbox.max_t.x - point.x) / direction.x;
+
+  if (tmin > tmax) {
+    T tmp = tmin;
+    tmin = tmax;
+    tmax = tmp;
+  }
+
+  T tymin = (bbox.min_t.y - point.y) / direction.y;
+  T tymax = (bbox.max_t.y - point.y) / direction.y;
+
+  if (tymin > tymax) {
+    T tmp = tymin;
+    tymin = tymax;
+    tymax = tmp;
+  }
+
+  if ((tmin > tymax) || (tymin > tmax)) {
+    return MAX_DISTANCE;
+  }
+
+  if (tymin > tmin) {
+    tmin = tymin;
+  }
+
+  if (tymax < tmax) {
+    tmax = tymax;
+  }
+
+  T tzmin = (bbox.min_t.z - point.z) / direction.z;
+  T tzmax = (bbox.max_t.z - point.z) / direction.z;
+
+  if (tzmin > tzmax) {
+    T tmp = tzmin;
+    tzmin = tzmax;
+    tzmax = tmp;
+  }
+
+  if ((tmin > tzmax) || (tzmin > tmax)) {
+    return MAX_DISTANCE;
+  }
+
+  if (tzmin > tmin) {
+    tmin = tzmin;
+  }
+
+  if (tzmax < tmax) {
+    tmax = tzmax;
+  }
+
+  return tmin;
+}
+
 
 #endif // ifndef AABB_H

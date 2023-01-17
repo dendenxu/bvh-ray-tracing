@@ -28,6 +28,7 @@
 
 void bvh_distance_queries_kernel(const torch::Tensor& triangles,
         const torch::Tensor& points,
+        const torch::Tensor& directions,
         torch::Tensor* distances,
         torch::Tensor* closest_points,
         torch::Tensor* closest_faces,
@@ -47,10 +48,12 @@ void bvh_distance_queries_kernel(const torch::Tensor& triangles,
 
 std::vector<torch::Tensor> bvh_distance_queries(torch::Tensor triangles,
         torch::Tensor points,
+        torch::Tensor directions,
         int queue_size=128,
         bool sort_points_by_morton=true) {
     CHECK_INPUT(triangles);
     CHECK_INPUT(points);
+    CHECK_INPUT(directions);
 
     auto options = torch::TensorOptions()
         .dtype(triangles.dtype())
@@ -73,8 +76,8 @@ std::vector<torch::Tensor> bvh_distance_queries(torch::Tensor triangles,
         .layout(triangles.layout())
         .device(triangles.device()));
 
-    bvh_distance_queries_kernel(triangles,
-            points, &distances, &closest_points, &closest_faces,
+    bvh_distance_queries_kernel(triangles, points, directions,
+            &distances, &closest_points, &closest_faces,
             &closest_bcs,
             queue_size, sort_points_by_morton);
 
@@ -96,7 +99,7 @@ std::vector<torch::Tensor> bvh_distance_queries(torch::Tensor triangles,
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("distance_queries", &bvh_distance_queries, "BVH distance queries forward (CUDA)",
-        py::arg("triangles"), py::arg("points"),
+        py::arg("triangles"), py::arg("points"), py::arg("directions"),
         py::arg("queue_size") = 128,
         py::arg("sort_points_by_morton") = true
         );
