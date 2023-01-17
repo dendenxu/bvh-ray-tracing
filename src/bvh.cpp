@@ -67,7 +67,7 @@ std::vector<torch::Tensor> bvh_distance_queries(torch::Tensor triangles,
             triangles.size(0), points.size(1), 3},
             -1, options);
     torch::Tensor closest_bcs = torch::full({
-            triangles.size(0), points.size(1), 3}, 0,
+            triangles.size(0), points.size(1), 3}, -1,
             options);
     torch::Tensor closest_faces = torch::full({
             triangles.size(0), points.size(1)},

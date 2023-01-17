@@ -38,9 +38,10 @@ class BVHFunction(autograd.Function):
     @staticmethod
     def forward(ctx,
                 triangles: Tensor,
-                points: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+                points: Tensor,
+                directions: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         outputs = bvh_distance_queries_cuda.distance_queries(
-            triangles, points,
+            triangles, points, directions,
             queue_size=BVHFunction.QUEUE_SIZE,
             sort_points_by_morton=BVHFunction.SORT_POINTS_BY_MORTON,
         )
@@ -79,7 +80,9 @@ class BVH(nn.Module):
     def forward(
             self,
             triangles: Tensor,
-            points: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+            points: Tensor,
+            directions: Tensor,
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         ''' Forward pass of the search tree
 
             Parameters
@@ -107,7 +110,7 @@ class BVH(nn.Module):
         '''
 
         output = BVHFunction.apply(
-            triangles, points)
+            triangles, points, directions)
         distances, closest_points, closest_faces, closest_bcs = output
 
         return distances, closest_points, closest_faces, closest_bcs

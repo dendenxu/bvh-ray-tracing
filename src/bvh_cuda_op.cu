@@ -124,34 +124,39 @@ template <typename T>
 __host__ __device__ int rayToTriangleDistance(
                 vec3<T> p, // starting point
                 vec3<T> d, // ray direction
-                TrianglePtr<T> tri_ptr
-                vec3<T> *closest_point
+                TrianglePtr<T> tri_ptr,
+                vec3<T> *closest_point,
                 vec3<T> *closest_bc)
 {
+    // define convinient values
     vec3<T> v0 = tri_ptr->v0;
     vec3<T> v1 = tri_ptr->v1;
     vec3<T> v2 = tri_ptr->v2;
     vec3<T> edge1 = v1 - v0;
     vec3<T> edge2 = v2 - v0;
 
+    // define temporary variable
     T u, v, t;
-    T direction[3], avec[3], bvec[3], tvec[3], det, inv_det;
-    cross(d, edge2, avec);
-    dot(avec, edge1, det);
+    T det, inv_det;
+    vec3<T> avec, bvec, tvec;
+
+    avec = cross(d, edge2);
+    det = dot(avec, edge1);
     if (det > EPSILON) {
-        subtract(p, v0, tvec);
-        dot(avec, tvec, u);
-        cross(tvec, edge1, bvec);
-        dot(bvec, d, v);
+        tvec = p - v0;
+        u = dot(avec, tvec);
+        bvec = cross(tvec, edge1);
+        v = dot(bvec, d);
     }
     else if (det < -EPSILON) {
-        subtract(p, v0, tvec);
-        dot(avec, tvec, u);
-        cross(tvec, edge1, bvec);
-        dot(bvec, d, v);
-    } else {}
+        tvec = p - v0;
+        u = dot(avec, tvec);
+        bvec = cross(tvec, edge1);
+        v = dot(bvec, d);
+    }
+
     inv_det = 1.0 / det;
-    dot(bvec, edge2, t);
+    t = dot(bvec, edge2);
     t *= inv_det;
     u *= inv_det;
     v *= inv_det;
@@ -528,13 +533,14 @@ __global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_dire
   for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < num_points;
        idx += blockDim.x * gridDim.x) {
     vec3<T> query_point = query_points[idx];
+    vec3<T> ray_direction = ray_directions[idx];
 
     long closest_face;
     vec3<T> closest_bc;
     vec3<T> closest_point;
 
     T closest_distance = raytraceBVHStack<T, QueueSize>(
-          query_point, root, &closest_face, &closest_bc, &closest_point);
+          query_point, ray_direction, root, &closest_face, &closest_bc, &closest_point);
 
     distances[idx] = closest_distance;
     closest_points[idx] = closest_point;
@@ -1142,7 +1148,7 @@ void bvh_distance_queries_kernel(
 #endif
             ComputePointMortonCodes<scalar_t><<<gridSize, NUM_THREADS>>>(
                 // morton_sorted_points.data().get(), points_ptr, num_points,
-                morton_sorted_points_ptr, morton_sorted_directions_ptr, points_ptr, num_points,
+                morton_sorted_points_ptr, morton_sorted_directions_ptr, points_ptr, directions_ptr, num_points,
                 morton_codes.data().get());
             cudaCheckError();
             cudaDeviceSynchronize();
@@ -1159,7 +1165,7 @@ void bvh_distance_queries_kernel(
                 thrust::device_pointer_cast(morton_sorted_points_ptr);
 
             thrust::device_ptr<vec3<scalar_t>> dev_directions_ptr =
-                thrust::device_pointer_cast(morton_sorted_points_ptr);
+                thrust::device_pointer_cast(morton_sorted_directions_ptr);
 
             thrust::sort_by_key(morton_codes.begin(), morton_codes.end(),
                                 thrust::make_zip_iterator(thrust::make_tuple(
@@ -1167,7 +1173,7 @@ void bvh_distance_queries_kernel(
             cudaCheckError();
 
             points_ptr = morton_sorted_points_ptr;
-            directions_pts = morton_sorted_directions_ptr;
+            directions_ptr = morton_sorted_directions_ptr;
           }
 
 #ifdef BVH_PROFILING
@@ -1175,7 +1181,7 @@ void bvh_distance_queries_kernel(
 #endif
           if (queue_size == 32) {
             findRayMeshIntersection<scalar_t, 32><<<gridSize, NUM_THREADS>>>(
-                points_ptr, directions_ptr, directions_ptr distances_ptr, closest_points_ptr,
+                points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                 closest_faces_ptr, closest_bcs_ptr,
                 internal_nodes.data().get(), num_points);
           } else if (queue_size == 64) {
