@@ -29,6 +29,7 @@
 #include "double_vec_ops.h"
 #include "helper_math.h"
 
+#define EPSILON 0.000001
 
 template <typename T>
 __align__(32)
@@ -117,60 +118,33 @@ __host__ __device__ T pointToAABBDistance(vec3<T> point, const AABB<T>& bbox ) {
 
 template <typename T>
 __forceinline__
-__host__ __device__ T rayToAABBIntersect(vec3<T> point, vec3<T> direction, const AABB<T>& bbox ) {
+__host__ __device__ bool rayToAABBIntersect(vec3<T> point, vec3<T> direction, const AABB<T>& bbox ) {
 
-  T tmin = (bbox.min_t.x - point.x) / direction.x;
-  T tmax = (bbox.max_t.x - point.x) / direction.x;
+  // remove invalid small values to avoid division by zero
+  vec3<T> dir;
+  dir.x = ((direction.x > 0) && (direction.x < EPSILON))? EPSILON : direction.x;
+  dir.x = ((direction.x < 0) && (direction.x > EPSILON))? -EPSILON : direction.x;
+  dir.y = ((direction.y > 0) && (direction.y < EPSILON))? EPSILON : direction.y;
+  dir.y = ((direction.y < 0) && (direction.y > EPSILON))? -EPSILON : direction.y;
+  dir.x = ((direction.z > 0) && (direction.z < EPSILON))? EPSILON : direction.z;
+  dir.x = ((direction.z < 0) && (direction.z > EPSILON))? -EPSILON : direction.z;
 
-  if (tmin > tmax) {
-    T tmp = tmin;
-    tmin = tmax;
-    tmax = tmp;
-  }
+  vec3<T> tmin = (bbox.min_t - point) / dir;
+  vec3<T> tmax = (bbox.max_t - point) / dir;
+  vec3<T> t1, t2;
+  t1.x = min(tmin.x, tmax.x);
+  t1.y = min(tmin.y, tmax.y);
+  t1.z = min(tmin.z, tmax.z);
 
-  T tymin = (bbox.min_t.y - point.y) / direction.y;
-  T tymax = (bbox.max_t.y - point.y) / direction.y;
+  t2.x = max(tmin.x, tmax.x);
+  t2.y = max(tmin.y, tmax.y);
+  t2.z = max(tmin.z, tmax.z);
 
-  if (tymin > tymax) {
-    T tmp = tymin;
-    tymin = tymax;
-    tymax = tmp;
-  }
+  T near, far;
+  near = max(max(t1.x, t1.y), t1.z);
+  far = min(min(t2.x, t2.y), t2.z);
 
-  if ((tmin > tymax) || (tymin > tmax)) {
-    return MAX_DISTANCE;
-  }
-
-  if (tymin > tmin) {
-    tmin = tymin;
-  }
-
-  if (tymax < tmax) {
-    tmax = tymax;
-  }
-
-  T tzmin = (bbox.min_t.z - point.z) / direction.z;
-  T tzmax = (bbox.max_t.z - point.z) / direction.z;
-
-  if (tzmin > tzmax) {
-    T tmp = tzmin;
-    tzmin = tzmax;
-    tzmax = tmp;
-  }
-
-  if ((tmin > tzmax) || (tzmin > tmax)) {
-    return MAX_DISTANCE;
-  }
-
-  if (tzmin > tmin) {
-    tmin = tzmin;
-  }
-
-  if (tzmax < tmax) {
-    tmax = tzmax;
-  }
-
-  return tmin;
+  return near < far;
 }
 
 

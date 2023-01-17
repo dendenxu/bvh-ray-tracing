@@ -119,9 +119,8 @@ public:
   }
 };
 
-#define EPSILON 0.000001
 template <typename T>
-__host__ __device__ int rayToTriangleDistance(
+__host__ __device__ bool rayToTriangleIntersect(
                 vec3<T> p, // starting point
                 vec3<T> d, // ray direction
                 TrianglePtr<T> tri_ptr,
@@ -142,18 +141,10 @@ __host__ __device__ int rayToTriangleDistance(
 
     avec = cross(d, edge2);
     det = dot(avec, edge1);
-    if (det > EPSILON) {
-        tvec = p - v0;
-        u = dot(avec, tvec);
-        bvec = cross(tvec, edge1);
-        v = dot(bvec, d);
-    }
-    else if (det < -EPSILON) {
-        tvec = p - v0;
-        u = dot(avec, tvec);
-        bvec = cross(tvec, edge1);
-        v = dot(bvec, d);
-    }
+    tvec = p - v0;
+    u = dot(avec, tvec);
+    bvec = cross(tvec, edge1);
+    v = dot(bvec, d);
 
     inv_det = 1.0 / det;
     t = dot(bvec, edge2);
@@ -161,14 +152,10 @@ __host__ __device__ int rayToTriangleDistance(
     u *= inv_det;
     v *= inv_det;
 
+    // update only when the results are valid
     *closest_point = v0 + u * edge1 + v * edge2;
     *closest_bc = make_vec3<T>(static_cast<T>(1 - u - v), static_cast<T>(u), static_cast<T>(v));
-
-    if ((t >= 0) && (u >= 0) && (v >= 0) && (1 - u - v >= 0)) {
-      return dot(p - *closest_point, p - *closest_point);
-    } else {
-      return MAX_DISTANCE;
-    }
+    return (t >= 0) && (u >= 0) && (v >= 0) && (1 - u - v >= 0);
 }
 
 template <typename T>
@@ -314,7 +301,7 @@ __device__
 }
 
 template <typename T, int StackSize = 32>
-__device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirection, BVHNodePtr<T> root,
+__device__ bool raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirection, BVHNodePtr<T> root,
                               long *closest_face, vec3<T> *closest_bc,
                               vec3<T> *closestPoint) {
   BVHNodePtr<T> stack[StackSize];
@@ -322,18 +309,14 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
   *stackPtr++ = nullptr; // push
 
   BVHNodePtr<T> node = root;
-  T closest_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
 
   do {
     // Check each child node for overlap.
     BVHNodePtr<T> childL = node->left;
     BVHNodePtr<T> childR = node->right;
 
-    T distance_left = rayToAABBIntersect<T>(queryPoint, rayDirection, childL->bbox);
-    T distance_right = rayToAABBIntersect<T>(queryPoint, rayDirection, childR->bbox);
-
-    bool checkL = distance_left < closest_distance;
-    bool checkR = distance_right < closest_distance;
+    bool checkL = rayToAABBIntersect<T>(queryPoint, rayDirection, childL->bbox);
+    bool checkR = rayToAABBIntersect<T>(queryPoint, rayDirection, childR->bbox);
 
     if (checkL && childL->isLeaf()) {
       // If  the child is a leaf then
@@ -341,13 +324,12 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
       vec3<T> curr_clos_point;
       vec3<T> curr_closest_bc;
 
-      T distance_left = rayToTriangleDistance<T>(
-          queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
-      if (distance_left <= closest_distance) {
-        closest_distance = distance_left;
+      if (rayToTriangleIntersect<T>(
+          queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point)) {
         *closest_face = childL->idx;
         *closestPoint = curr_clos_point;
         *closest_bc = curr_closest_bc;
+        return true;
       }
     }
 
@@ -357,13 +339,12 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
       vec3<T> curr_clos_point;
       vec3<T> curr_closest_bc;
 
-      T distance_right = rayToTriangleDistance<T>(
-          queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
-      if (distance_right <= closest_distance) {
-        closest_distance = distance_right;
+      if (rayToTriangleIntersect<T>(
+          queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point)) {
         *closest_face = childR->idx;
         *closestPoint = curr_clos_point;
         *closest_bc = curr_closest_bc;
+        return true;
       }
     }
     // Query overlaps an internal node => traverse.
@@ -380,7 +361,7 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
     }
   } while (node != nullptr);
 
-  return closest_distance;
+  return false;
 }
 
 template <typename T, int StackSize = 32>
@@ -539,13 +520,14 @@ __global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_dire
     vec3<T> closest_bc;
     vec3<T> closest_point;
 
-    T closest_distance = raytraceBVHStack<T, QueueSize>(
-          query_point, ray_direction, root, &closest_face, &closest_bc, &closest_point);
+    if (raytraceBVHStack<T, QueueSize>(
+          query_point, ray_direction, root, &closest_face, &closest_bc, &closest_point)) {
+      distances[idx] = dot(query_point - closest_point, query_point - closest_point);
+      closest_points[idx] = closest_point;
+      closest_faces[idx] = closest_face;
+      closest_bcs[idx] = closest_bc;
+    }
 
-    distances[idx] = closest_distance;
-    closest_points[idx] = closest_point;
-    closest_faces[idx] = closest_face;
-    closest_bcs[idx] = closest_bc;
   }
   return;
 }
