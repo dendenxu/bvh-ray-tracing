@@ -141,9 +141,11 @@ __host__ __device__ T rayToTriangleIntersect(
     vec3<T> pvec = cross(dir, edge2);
 
     T det = dot(edge1, pvec);
-    // det = __fdividef(1.0f, det);  // CUDA intrinsic function
-    // det = __ddividef(1.0, det);
-    det = 1.0 / det;
+    if (std::is_same<T, float>::value) {
+        det = __fdividef(1.0f, det);  // CUDA intrinsic function, faster math
+    } else {
+        det = 1.0 / det;
+    }
     T u = dot(tvec, pvec) * det;
     if (u < 0.0 || u > 1.0)
         return -1.0;
@@ -306,11 +308,12 @@ template <typename T, int StackSize = 32>
 __device__ T rayTraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirection, BVHNodePtr<T> root,
                               long *closest_face, vec3<T> *closest_bc,
                               vec3<T> *closestPoint) {
-    BVHNodePtr<T> stack[StackSize];
+    BVHNodePtr<T> stack[StackSize];  // TODO: what if the stack is full?
     BVHNodePtr<T> *stackPtr = stack;
-    *stackPtr++ = nullptr;  // push
+    *stackPtr++ = nullptr;  // push (used as while loop exit)
 
     BVHNodePtr<T> node = root;
+    // Will never get updated if no intersection, returned as the max value
     T closest_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
 
     do {
@@ -318,16 +321,19 @@ __device__ T rayTraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
         BVHNodePtr<T> childL = node->left;
         BVHNodePtr<T> childR = node->right;
 
+        // Ray and AABB only tests intersection or not
         bool checkL = rayToAABBIntersect<T>(queryPoint, rayDirection, childL->bbox);
         bool checkR = rayToAABBIntersect<T>(queryPoint, rayDirection, childR->bbox);
 
         if (checkL && childL->isLeaf()) {
-            // If  the child is a leaf then
+            // If the child is a leaf then
             TrianglePtr<T> tri_ptr = childL->tri_ptr;
             vec3<T> curr_clos_point;
             vec3<T> curr_closest_bc;
+
             T t = rayToTriangleIntersect<T>(
                 queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
+            // Keeping track of the closest hit (when there're multiple hits)
             if (t > 0 && t < closest_distance) {
                 closest_distance = t;
                 *closest_face = childL->idx;
@@ -337,13 +343,14 @@ __device__ T rayTraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
         }
 
         if (checkR && childR->isLeaf()) {
-            // If  the child is a leaf then
+            // If the child is a leaf then
             TrianglePtr<T> tri_ptr = childR->tri_ptr;
             vec3<T> curr_clos_point;
             vec3<T> curr_closest_bc;
 
             T t = rayToTriangleIntersect<T>(
                 queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
+            // Keeping track of the closest hit (when there're multiple hits)
             if (t > 0 && t < closest_distance) {
                 closest_distance = t;
                 *closest_face = childR->idx;
@@ -525,15 +532,20 @@ __global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_dire
         vec3<T> closest_bc;
         vec3<T> closest_point;
 
-        T max_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
+        // MARK: Never define a macro for this, will not evaluate to the values desired, strange...
+        T max_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;  // threshold for intersection
+        // MARK: When points are sorted by mortion, returns quicker, why? Terminates upon first few intersections?
         T closest_distance = rayTraceBVHStack<T, QueueSize>(
             query_point, ray_direction, root, &closest_face, &closest_bc, &closest_point);
         if ((closest_distance > 0) && (closest_distance < max_distance)) {
+            // intersection
             distances[idx] = closest_distance;
             closest_points[idx] = closest_point;
             closest_faces[idx] = closest_face;
             closest_bcs[idx] = closest_bc;
         } else {
+            // no intersection
+            // MARK: When sorting points by morton, always get this, why?
             distances[idx] = -1;
             closest_points[idx] = make_vec3<T>(0, 0, 0);
             closest_faces[idx] = -1;
@@ -620,7 +632,8 @@ __global__ void ComputePointMortonCodes(vec3<T> *points, vec3<T> *directions, ve
          idx += blockDim.x * gridDim.x) {
         // Fetch the current triangle
         vec3<T> point = in_points[idx];
-        vec3<T> direction = directions[idx];
+        vec3<T> direction = in_directions[idx];
+        // WTF... typos kill people (I wrote vec3<T> direction = directions[idx]; and debugged a whole day)
 
         T x = (point.x - scene_bb.min_t.x) / (scene_bb.max_t.x - scene_bb.min_t.x);
         T y = (point.y - scene_bb.min_t.y) / (scene_bb.max_t.y - scene_bb.min_t.y);
@@ -1071,11 +1084,11 @@ void bvh_ray_tracing_kernel(
             cudaMalloc((void **)&distances_ptr, num_points * sizeof(scalar_t));
             cudaCheckError();
 
-            vec3<scalar_t> *morton_sorted_points_ptr;
+            vec3<scalar_t> *morton_sorted_points_ptr;  // a copy of points
             cudaMalloc((void **)&morton_sorted_points_ptr, num_points * sizeof(vec3<scalar_t>));
             cudaCheckError();
 
-            vec3<scalar_t> *morton_sorted_directions_ptr;
+            vec3<scalar_t> *morton_sorted_directions_ptr;  // a copy of directions
             cudaMalloc((void **)&morton_sorted_directions_ptr, num_points * sizeof(vec3<scalar_t>));
             cudaCheckError();
 
@@ -1129,9 +1142,8 @@ void bvh_ray_tracing_kernel(
                     // This function also performs an implicit copy of the points and direction data
                     // Now morton_codes stores morton codes of all the points
                     ComputePointMortonCodes<scalar_t><<<gridSize, NUM_THREADS>>>(
-                        // morton_sorted_points.data().get(), points_ptr, num_points,
-                        morton_sorted_points_ptr, morton_sorted_directions_ptr, points_ptr, directions_ptr, num_points,
-                        morton_codes.data().get());
+                        morton_sorted_points_ptr, morton_sorted_directions_ptr, points_ptr, directions_ptr,
+                        num_points, morton_codes.data().get());
                     cudaCheckError();
                     cudaDeviceSynchronize();
 #if PRINT_TIMINGS == 1
@@ -1149,6 +1161,8 @@ void bvh_ray_tracing_kernel(
                                         thrust::make_zip_iterator(thrust::make_tuple(
                                             point_ids.begin(), dev_points_ptr, dev_directions_ptr)));
                     cudaCheckError();
+                    // Now point_ids stores original index, dev_points_ptr stores the sorted points, dev_directions_ptr stores the sorted directions
+                    // This is like performing an argsort and taking out the values as argsorted
 
                     // Using the sorted points and directions
                     points_ptr = morton_sorted_points_ptr;
@@ -1200,6 +1214,8 @@ void bvh_ray_tracing_kernel(
                 long *closest_faces_dest_ptr = closest_faces->data<long>() + num_points * bidx;
                 vec3<scalar_t> *closest_bcs_dest_ptr = (vec3<scalar_t> *)closest_bcs->data<scalar_t>() + num_points * bidx;
                 if (sort_points_by_morton) {
+                    // Will copy back the data according to indices specified by point_ids
+                    // Which stores the original indices of in the tensor (the is a reverse of argsort)
                     copy_to_tensor<scalar_t><<<gridSize, NUM_THREADS>>>(
                         distances_dest_ptr, distances_ptr,
                         point_ids.data().get(), num_points);
