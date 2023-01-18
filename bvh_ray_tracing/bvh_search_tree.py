@@ -32,7 +32,7 @@ Tensor = NewType('Tensor', torch.Tensor)
 class BVHFunction(autograd.Function):
     ''' Autograd wrapper for the BVH nearest neighbor kernel
     '''
-    QUEUE_SIZE = 1024
+    QUEUE_SIZE = 128
     SORT_POINTS_BY_MORTON = True  # slow on large queries
 
     @staticmethod
@@ -57,7 +57,7 @@ class BVH(nn.Module):
 
     def __init__(self,
                  sort_points_by_morton: bool = True,  # slow on large queries
-                 queue_size: int = 1024) -> None:
+                 queue_size: int = 128) -> None:
         ''' Constructor for the BVH acceleration structure
 
             Parameters

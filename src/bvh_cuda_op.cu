@@ -1052,8 +1052,7 @@ void bvh_ray_tracing_kernel(
 
     int numSMs;
     cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, 0);
-    int gridSize = std::min(
-        32 * numSMs, static_cast<int>((num_points + blockSize - 1) / blockSize));
+    int gridSize = std::min(32 * numSMs, static_cast<int>((num_points + blockSize - 1) / blockSize));
 
     // Construct the bvh tree
     AT_DISPATCH_FLOATING_TYPES(
@@ -1073,18 +1072,15 @@ void bvh_ray_tracing_kernel(
             cudaCheckError();
 
             vec3<scalar_t> *morton_sorted_points_ptr;
-            cudaMalloc((void **)&morton_sorted_points_ptr,
-                       num_points * sizeof(vec3<scalar_t>));
+            cudaMalloc((void **)&morton_sorted_points_ptr, num_points * sizeof(vec3<scalar_t>));
             cudaCheckError();
 
             vec3<scalar_t> *morton_sorted_directions_ptr;
-            cudaMalloc((void **)&morton_sorted_directions_ptr,
-                       num_points * sizeof(vec3<scalar_t>));
+            cudaMalloc((void **)&morton_sorted_directions_ptr, num_points * sizeof(vec3<scalar_t>));
             cudaCheckError();
 
             vec3<scalar_t> *closest_points_ptr;
-            cudaMalloc((void **)&closest_points_ptr,
-                       num_points * sizeof(vec3<scalar_t>));
+            cudaMalloc((void **)&closest_points_ptr, num_points * sizeof(vec3<scalar_t>));
             cudaCheckError();
 
             long *closest_faces_ptr;
@@ -1097,15 +1093,13 @@ void bvh_ray_tracing_kernel(
 
             // The thrust vectors that contain the BVH nodes
             thrust::device_vector<BVHNode<scalar_t>> leaf_nodes(num_triangles);
-            thrust::device_vector<BVHNode<scalar_t>> internal_nodes(num_triangles -
-                                                                    1);
+            thrust::device_vector<BVHNode<scalar_t>> internal_nodes(num_triangles - 1);
 
             auto triangle_scalar_t_ptr = triangles.data<scalar_t>();
 
             for (int bidx = 0; bidx < batch_size; ++bidx) {
-                Triangle<scalar_t> *triangles_ptr =
-                    (TrianglePtr<scalar_t>)triangle_scalar_t_ptr +
-                    num_triangles * bidx;
+                // Get the triangles in the current batch
+                Triangle<scalar_t> *triangles_ptr = (TrianglePtr<scalar_t>)triangle_scalar_t_ptr + num_triangles * bidx;
 
 #if DEBUG_PRINT == 1
                 std::cout << "Start building BVH" << std::endl;
@@ -1124,7 +1118,7 @@ void bvh_ray_tracing_kernel(
                 vec3<scalar_t> *points_ptr = (vec3<scalar_t> *)points.data<scalar_t>() + num_points * bidx;
                 vec3<scalar_t> *directions_ptr = (vec3<scalar_t> *)directions.data<scalar_t>() + num_points * bidx;
                 thrust::device_vector<int> point_ids(num_points);
-                thrust::sequence(point_ids.begin(), point_ids.end());
+                thrust::sequence(point_ids.begin(), point_ids.end());  // now 0 -> num_points
 
                 if (sort_points_by_morton) {
                     thrust::device_vector<MortonCode> morton_codes(num_points);
@@ -1132,6 +1126,8 @@ void bvh_ray_tracing_kernel(
 #if PRINT_TIMINGS == 1
                     cudaEventRecord(start);
 #endif
+                    // This function also performs an implicit copy of the points and direction data
+                    // Now morton_codes stores morton codes of all the points
                     ComputePointMortonCodes<scalar_t><<<gridSize, NUM_THREADS>>>(
                         // morton_sorted_points.data().get(), points_ptr, num_points,
                         morton_sorted_points_ptr, morton_sorted_directions_ptr, points_ptr, directions_ptr, num_points,
@@ -1146,16 +1142,15 @@ void bvh_ray_tracing_kernel(
                     std::cout << "Compute morton codes for input points = "
                               << milliseconds << " (ms)" << std::endl;
 #endif
-
+                    // Perform sorting for points & directions from constructed morton codes
                     thrust::device_ptr<vec3<scalar_t>> dev_points_ptr = thrust::device_pointer_cast(morton_sorted_points_ptr);
-
                     thrust::device_ptr<vec3<scalar_t>> dev_directions_ptr = thrust::device_pointer_cast(morton_sorted_directions_ptr);
-
                     thrust::sort_by_key(morton_codes.begin(), morton_codes.end(),
                                         thrust::make_zip_iterator(thrust::make_tuple(
                                             point_ids.begin(), dev_points_ptr, dev_directions_ptr)));
                     cudaCheckError();
 
+                    // Using the sorted points and directions
                     points_ptr = morton_sorted_points_ptr;
                     directions_ptr = morton_sorted_directions_ptr;
                 }
@@ -1199,38 +1194,33 @@ void bvh_ray_tracing_kernel(
                 cudaProfilerStop();
 #endif
 
-                scalar_t *distances_dest_ptr =
-                    (scalar_t *)distances->data<scalar_t>() + num_points * bidx;
-                vec3<scalar_t> *closest_points_dest_ptr =
-                    (vec3<scalar_t> *)closest_points->data<scalar_t>() +
-                    num_points * bidx;
-                vec3<scalar_t> *closest_bcs_dest_ptr =
-                    (vec3<scalar_t> *)closest_bcs->data<scalar_t>() + num_points * bidx;
-                long *closest_faces_dest_ptr =
-                    closest_faces->data<long>() + num_points * bidx;
+                // Copy data back to the tensors // TODO: directly perform operations on the tensors
+                scalar_t *distances_dest_ptr = (scalar_t *)distances->data<scalar_t>() + num_points * bidx;
+                vec3<scalar_t> *closest_points_dest_ptr = (vec3<scalar_t> *)closest_points->data<scalar_t>() + num_points * bidx;
+                long *closest_faces_dest_ptr = closest_faces->data<long>() + num_points * bidx;
+                vec3<scalar_t> *closest_bcs_dest_ptr = (vec3<scalar_t> *)closest_bcs->data<scalar_t>() + num_points * bidx;
                 if (sort_points_by_morton) {
-                    copy_to_tensor<scalar_t>
-                        <<<gridSize, NUM_THREADS>>>(distances_dest_ptr, distances_ptr,
-                                                    point_ids.data().get(), num_points);
+                    copy_to_tensor<scalar_t><<<gridSize, NUM_THREADS>>>(
+                        distances_dest_ptr, distances_ptr,
+                        point_ids.data().get(), num_points);
                     copy_to_tensor<vec3<scalar_t>><<<gridSize, NUM_THREADS>>>(
                         closest_points_dest_ptr, closest_points_ptr,
                         point_ids.data().get(), num_points);
-                    copy_to_tensor<vec3<scalar_t>><<<gridSize, NUM_THREADS>>>(
-                        closest_bcs_dest_ptr, closest_bcs_ptr,
-                        point_ids.data().get(), num_points);
                     copy_to_tensor<long><<<gridSize, NUM_THREADS>>>(
                         closest_faces_dest_ptr, closest_faces_ptr,
+                        point_ids.data().get(), num_points);
+                    copy_to_tensor<vec3<scalar_t>><<<gridSize, NUM_THREADS>>>(
+                        closest_bcs_dest_ptr, closest_bcs_ptr,
                         point_ids.data().get(), num_points);
                 } else {
                     cudaMemcpy(distances_dest_ptr, distances_ptr,
                                num_points * sizeof(scalar_t), cudaMemcpyDeviceToDevice);
                     cudaMemcpy(closest_points_dest_ptr, closest_points_ptr,
-                               num_points * sizeof(vec3<scalar_t>),
-                               cudaMemcpyDeviceToDevice);
-                    cudaMemcpy(closest_bcs_dest_ptr, closest_bcs_ptr,
                                num_points * sizeof(vec3<scalar_t>), cudaMemcpyDeviceToDevice);
                     cudaMemcpy(closest_faces_dest_ptr, closest_faces_ptr,
                                num_points * sizeof(long), cudaMemcpyDeviceToDevice);
+                    cudaMemcpy(closest_bcs_dest_ptr, closest_bcs_ptr,
+                               num_points * sizeof(vec3<scalar_t>), cudaMemcpyDeviceToDevice);
                 }
 
 #if DEBUG_PRINT == 1
