@@ -1,6 +1,8 @@
 # CUDA Ray Tracing using BVH
 
-**WIP: Supporting Ray-Triangle Intersection -> Ray Tracing on CUDA.**
+![teasear](assets/000042.png)
+
+**[WIP] Supporting Ray-Triangle Intersection -> Ray Tracing on CUDA.**
 
 This is a fork from: https://github.com/YuliangXiu/bvh-distance-queries
 
