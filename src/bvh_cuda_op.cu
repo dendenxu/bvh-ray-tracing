@@ -135,48 +135,29 @@ __host__ __device__ T rayToTriangleIntersect(
     vec3<T> edge2 = v2 - v0;
 
     // define temporary variable
-    T u, v, t;
-    T det, inv_det;
-    vec3<T> avec, bvec, tvec;
+    // T u, v, t;
+    // T det, inv_det;
+    // vec3<T> avec, bvec, tvec;
+    // this this the third cuda moller trumbore implementation by now
+    vec3<T> tvec = ori - v0;
+    vec3<T> pvec = cross(dir, edge2);
 
-    avec = cross(dir, edge2);
-    det = dot(avec, edge1);
-    if (det > EPSILON) {
-        tvec = ori - v0;
-        u= dot(avec, tvec);
-        if (u < 0 || u > det)
-            return false;
-        bvec = cross(tvec, edge1);
-        v = dot(bvec, dir);
-        if (v < 0 || u + v > det)
-            return false;
-    }
-    else if (det < -EPSILON) {
-        tvec = ori - v0;
-        u= dot(avec, tvec);
-        if (u > 0 || u < det)
-            return false;
-        bvec = cross(tvec, edge1);
-        v = dot(bvec, dir);
-        if (v > 0 || u + v < det)
-            return false;
-    }
-    else
-        return false;
-    inv_det = 1.0 / det;
-    t = dot(bvec, edge2);
-    t *= inv_det;
-    if (t < 0 || t > 1) {
-        return false;
-    }
-
-    u *= inv_det;
-    v *= inv_det;
+    T  det = dot(edge1, pvec);
+    // det = __fdividef(1.0f, det);  // CUDA intrinsic function 
+    // det = __ddividef(1.0, det);
+    det = 1.0 / det;
+    T u = dot(tvec, pvec) * det;
+    if (u < 0.0 || u > 1.0)
+      return -1.0;
+    vec3<T> qvec = cross(tvec, edge1);
+    T v = dot(dir, qvec) * det;
+    if (v < 0.0 || (u + v) > 1.0)
+      return -1.0;
 
     // update only when the results are valid
     *closest_point = v0 + u * edge1 + v * edge2;
     *closest_bc = make_vec3<T>(static_cast<T>(1 - u - v), static_cast<T>(u), static_cast<T>(v));
-    return t;
+    return dot(edge2, qvec) * det;
 }
 
 template <typename T>
@@ -348,6 +329,7 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
       T t = rayToTriangleIntersect<T>(
           queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
       if (t > 0 && t < closest_hit) {
+        closest_hit = t;
         *closest_face = childL->idx;
         *closestPoint = curr_clos_point;
         *closest_bc = curr_closest_bc;
@@ -363,6 +345,7 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
       T t = rayToTriangleIntersect<T>(
           queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
       if (t > 0 && t < closest_hit) {
+        closest_hit = t;
         *closest_face = childR->idx;
         *closestPoint = curr_clos_point;
         *closest_bc = curr_closest_bc;
