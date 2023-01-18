@@ -118,19 +118,22 @@ __host__ __device__ T pointToAABBDistance(vec3<T> point, const AABB<T>& bbox ) {
 
 template <typename T>
 __forceinline__
-__host__ __device__ bool rayToAABBIntersect(vec3<T> point, vec3<T> direction, const AABB<T>& bbox ) {
+__host__ __device__ bool rayToAABBIntersect(vec3<T> point, vec3<T> direction, const AABB<T>& bbox) {
 
   // remove invalid small values to avoid division by zero
-  vec3<T> dir;
-  dir.x = ((direction.x > 0) && (direction.x < EPSILON))? EPSILON : direction.x;
-  dir.x = ((direction.x < 0) && (direction.x > EPSILON))? -EPSILON : direction.x;
-  dir.y = ((direction.y > 0) && (direction.y < EPSILON))? EPSILON : direction.y;
-  dir.y = ((direction.y < 0) && (direction.y > EPSILON))? -EPSILON : direction.y;
-  dir.x = ((direction.z > 0) && (direction.z < EPSILON))? EPSILON : direction.z;
-  dir.x = ((direction.z < 0) && (direction.z > EPSILON))? -EPSILON : direction.z;
+  // how the heck are there sooooo many undebuggable bugs?
+  vec3<T> dir = direction;
+  dir.x = ((dir.x > -EPSILON*EPSILON) && (dir.x < EPSILON))? EPSILON : dir.x; // update the values on the fly to avoid strange nans
+  dir.x = ((dir.x < EPSILON*EPSILON) && (dir.x > -EPSILON))? -EPSILON : dir.x;
+  dir.y = ((dir.y > -EPSILON*EPSILON) && (dir.y < EPSILON))? EPSILON : dir.y;
+  dir.y = ((dir.y < EPSILON*EPSILON) && (dir.y > -EPSILON))? -EPSILON : dir.y;
+  dir.z = ((dir.z > -EPSILON*EPSILON) && (dir.z < EPSILON))? EPSILON : dir.z;
+  dir.z = ((dir.z < EPSILON*EPSILON) && (dir.z > -EPSILON))? -EPSILON : dir.z;
 
   vec3<T> tmin = (bbox.min_t - point) / dir;
   vec3<T> tmax = (bbox.max_t - point) / dir;
+  // vec3<T> tmin = (bbox.min_t - point) / direction;
+  // vec3<T> tmax = (bbox.max_t - point) / direction;
   vec3<T> t1, t2;
   t1.x = min(tmin.x, tmax.x);
   t1.y = min(tmin.y, tmax.y);
