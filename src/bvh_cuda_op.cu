@@ -124,8 +124,9 @@ __host__ __device__ T rayToTriangleIntersect(
                 vec3<T> ori, // starting point
                 vec3<T> dir, // ray direction
                 TrianglePtr<T> tri_ptr,
-                vec3<T> *closest_point,
-                vec3<T> *closest_bc)
+                vec3<T> *closest_bc,
+                vec3<T> *closest_point
+                )
 {
     // define convinient values
     vec3<T> v0 = tri_ptr->v0;
@@ -311,7 +312,7 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
   *stackPtr++ = nullptr; // push
 
   BVHNodePtr<T> node = root;
-  T closest_hit = MAX_DISTANCE;
+  T closest_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
 
   do {
     // Check each child node for overlap.
@@ -328,8 +329,8 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
       vec3<T> curr_closest_bc;
       T t = rayToTriangleIntersect<T>(
           queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
-      if (t > 0 && t < closest_hit) {
-        closest_hit = t;
+      if (t > 0 && t < closest_distance) {
+        closest_distance = t;
         *closest_face = childL->idx;
         *closestPoint = curr_clos_point;
         *closest_bc = curr_closest_bc;
@@ -344,8 +345,8 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
 
       T t = rayToTriangleIntersect<T>(
           queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
-      if (t > 0 && t < closest_hit) {
-        closest_hit = t;
+      if (t > 0 && t < closest_distance) {
+        closest_distance = t;
         *closest_face = childR->idx;
         *closestPoint = curr_clos_point;
         *closest_bc = curr_closest_bc;
@@ -365,7 +366,7 @@ __device__ T raytraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
     }
   } while (node != nullptr);
 
-  return closest_hit;
+  return closest_distance;
 }
 
 template <typename T, int StackSize = 32>
@@ -524,9 +525,10 @@ __global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_dire
     vec3<T> closest_bc;
     vec3<T> closest_point;
 
+    T max_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
     T closest_distance = raytraceBVHStack<T, QueueSize>(
           query_point, ray_direction, root, &closest_face, &closest_bc, &closest_point);
-    if (closest_distance > 0 && closest_distance < MAX_DISTANCE) {
+    if ((closest_distance > 0) && (closest_distance < max_distance)) {
       distances[idx] = closest_distance;
       closest_points[idx] = closest_point;
       closest_faces[idx] = closest_face;

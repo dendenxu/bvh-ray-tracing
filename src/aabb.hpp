@@ -114,8 +114,6 @@ __host__ __device__ T pointToAABBDistance(vec3<T> point, const AABB<T>& bbox ) {
   return diff_x * diff_x + diff_y * diff_y + diff_z * diff_z;
 }
 
-#define MAX_DISTANCE std::is_same<T, float>::value ? FLT_MAX : DBL_MAX
-
 template <typename T>
 __forceinline__
 __host__ __device__ bool rayToAABBIntersect(vec3<T> point, vec3<T> direction, const AABB<T>& bbox) {
