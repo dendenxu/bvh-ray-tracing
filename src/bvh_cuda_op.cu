@@ -1041,7 +1041,7 @@ void buildBVH(BVHNodePtr<T> internal_nodes, BVHNodePtr<T> leaf_nodes,
 }
 
 
-void bvh_distance_queries_kernel(
+void bvh_ray_tracing_kernel(
     const torch::Tensor &triangles, const torch::Tensor &points, const torch::Tensor &directions,
     torch::Tensor *distances, torch::Tensor *closest_points,
     torch::Tensor *closest_faces, torch::Tensor *closest_bcs,

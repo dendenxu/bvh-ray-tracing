@@ -25,8 +25,8 @@ import torch
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 # Package meta-data.
-NAME = 'bvh_distance_queries'
-DESCRIPTION = 'PyTorch module for Mesh self intersection detection'
+NAME = 'bvh_ray_tracing'
+DESCRIPTION = 'PyTorch module for Mesh CUDA Ray Triangle Intersection'
 URL = ''
 EMAIL = 'vassilis.choutas@tuebingen.mpg.de'
 AUTHOR = 'Vassilis Choutas'
@@ -67,7 +67,7 @@ bvh_extra_compile_args = {'nvcc': ['-DPRINT_TIMINGS=0',
                                    '-DBVH_PROFILING=0',
                                    ],
                           'cxx': []}
-bvh_extension = CUDAExtension('bvh_distance_queries_cuda',
+bvh_extension = CUDAExtension('bvh_ray_tracing_cuda',
                               bvh_src_files,
                               include_dirs=bvh_include_dirs,
                               extra_compile_args=bvh_extra_compile_args)

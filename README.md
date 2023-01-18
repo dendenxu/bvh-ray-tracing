@@ -1,16 +1,23 @@
 # Point to Mesh distance computation
 
+WIP: Supporting Ray-Triangle Intersection -> Ray Tracing on CUDA.
+
 This package provides a PyTorch module that performs point to surface queries
 on the GPU
 
 
 ## Table of Contents
-  * [License](#license)
-  * [Description](#description)
-  * [Installation](#installation)
-  * [Examples](#examples)
-  * [Citation](#citation)
-  * [Contact](#contact)
+- [Point to Mesh distance computation](#point-to-mesh-distance-computation)
+  - [Table of Contents](#table-of-contents)
+  - [License](#license)
+  - [Description](#description)
+  - [Installation](#installation)
+  - [Examples](#examples)
+  - [Dependencies](#dependencies)
+  - [Example dependencies](#example-dependencies)
+  - [Running on Cluster](#running-on-cluster)
+  - [Citation](#citation)
+  - [Contact](#contact)
 
 ## License
 

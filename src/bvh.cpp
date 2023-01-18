@@ -26,7 +26,7 @@
 #include <torch/extension.h>
 
 
-void bvh_distance_queries_kernel(const torch::Tensor& triangles,
+void bvh_ray_tracing_kernel(const torch::Tensor& triangles,
         const torch::Tensor& points,
         const torch::Tensor& directions,
         torch::Tensor* distances,
@@ -46,7 +46,7 @@ void bvh_distance_queries_kernel(const torch::Tensor& triangles,
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
 
-std::vector<torch::Tensor> bvh_distance_queries(torch::Tensor triangles,
+std::vector<torch::Tensor> bvh_ray_tracing(torch::Tensor triangles,
         torch::Tensor points,
         torch::Tensor directions,
         int queue_size=128,
@@ -76,7 +76,7 @@ std::vector<torch::Tensor> bvh_distance_queries(torch::Tensor triangles,
         .layout(triangles.layout())
         .device(triangles.device()));
 
-    bvh_distance_queries_kernel(triangles, points, directions,
+    bvh_ray_tracing_kernel(triangles, points, directions,
             &distances, &closest_points, &closest_faces,
             &closest_bcs,
             queue_size, sort_points_by_morton);
@@ -98,7 +98,7 @@ std::vector<torch::Tensor> bvh_distance_queries(torch::Tensor triangles,
 // }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("distance_queries", &bvh_distance_queries, "BVH distance queries forward (CUDA)",
+  m.def("ray_tracing", &bvh_ray_tracing, "BVH Ray Tracing forward (CUDA)",
         py::arg("triangles"), py::arg("points"), py::arg("directions"),
         py::arg("queue_size") = 128,
         py::arg("sort_points_by_morton") = true

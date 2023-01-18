@@ -18,4 +18,3 @@
 
 import torch
 from .bvh_search_tree import BVH
-from .mesh_distance import PointToMeshResidual

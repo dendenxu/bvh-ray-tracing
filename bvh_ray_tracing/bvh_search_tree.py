@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 import torch.autograd as autograd
 
-import bvh_distance_queries_cuda
+import bvh_ray_tracing_cuda
 
 Tensor = NewType('Tensor', torch.Tensor)
 
@@ -40,7 +40,7 @@ class BVHFunction(autograd.Function):
                 triangles: Tensor,
                 points: Tensor,
                 directions: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        outputs = bvh_distance_queries_cuda.distance_queries(
+        outputs = bvh_ray_tracing_cuda.ray_tracing(
             triangles, points, directions,
             queue_size=BVHFunction.QUEUE_SIZE,
             sort_points_by_morton=BVHFunction.SORT_POINTS_BY_MORTON,
