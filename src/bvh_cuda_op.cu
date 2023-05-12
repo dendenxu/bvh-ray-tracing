@@ -125,6 +125,7 @@ __host__ __device__ T rayToTriangleDistance(
     TrianglePtr<T> triangle,
     vec3<T> *barycentric,
     vec3<T> *point) {
+
     vec3<T> u = triangle->v1 - triangle->v0;
     vec3<T> v = triangle->v2 - triangle->v0;
     vec3<T> normal = cross(u, v);
@@ -351,71 +352,71 @@ __device__
 }
 
 template <typename T, int StackSize = 32>
-__device__ T rayTraverseBVHStack(const vec3<T> &queryPoint,
-                                 const vec3<T> &rayDirection,
-                                 const vec3<T> &rayInverse,
+__device__ T rayTraverseBVHStack(const vec3<T> &ray_origin,
+                                 const vec3<T> &ray_direction,
+                                 const vec3<T> &ray_inverse,
                                  BVHNodePtr<T> root,
                                  long *closest_face, vec3<T> *closest_bc,
                                  vec3<T> *closestPoint) {
     BVHNodePtr<T> stack[StackSize];
-    BVHNodePtr<T> *stackPtr = stack;
-    *stackPtr++ = nullptr;  // push
+    BVHNodePtr<T> *stack_ptr = stack;
+    *stack_ptr++ = nullptr;  // push
 
     BVHNodePtr<T> node = root;
     T closest_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
 
     do {
         // Check each child node for overlap.
-        BVHNodePtr<T> childL = node->left;
-        BVHNodePtr<T> childR = node->right;
+        BVHNodePtr<T> child_left = node->left;
+        BVHNodePtr<T> child_right = node->right;
 
-        T distance_left = rayToAABBDistance<T>(queryPoint, rayDirection, rayInverse, childL->bbox);
-        T distance_right = rayToAABBDistance<T>(queryPoint, rayDirection, rayInverse, childR->bbox);
+        T distance_left = rayToAABBDistance<T>(ray_origin, ray_direction, ray_inverse, child_left->bbox);
+        T distance_right = rayToAABBDistance<T>(ray_origin, ray_direction, ray_inverse, child_right->bbox);
 
-        bool checkL = distance_left <= closest_distance;
-        bool checkR = distance_right <= closest_distance;
+        bool check_left = distance_left <= closest_distance;
+        bool check_right = distance_right <= closest_distance;
 
-        if (checkL && childL->isLeaf()) {
+        if (check_left && child_left->isLeaf()) {
             // If  the child is a leaf then
-            TrianglePtr<T> tri_ptr = childL->tri_ptr;
+            TrianglePtr<T> tri_ptr = child_left->tri_ptr;
             vec3<T> curr_clos_point;
             vec3<T> curr_closest_bc;
 
             T distance_left = rayToTriangleDistance<T>(
-                queryPoint, tri_ptr, &curr_closest_bc, &curr_clos_point);
+                ray_origin, ray_direction, tri_ptr, &curr_closest_bc, &curr_clos_point);
             if (distance_left <= closest_distance) {
                 closest_distance = distance_left;
-                *closest_face = childL->idx;
+                *closest_face = child_left->idx;
                 *closestPoint = curr_clos_point;
                 *closest_bc = curr_closest_bc;
             }
         }
 
-        if (checkR && childR->isLeaf()) {
+        if (check_right && child_right->isLeaf()) {
             // If  the child is a leaf then
-            TrianglePtr<T> tri_ptr = childR->tri_ptr;
+            TrianglePtr<T> tri_ptr = child_right->tri_ptr;
             vec3<T> curr_clos_point;
             vec3<T> curr_closest_bc;
 
             T distance_right = rayToTriangleDistance<T>(
-                queryPoint, tri_ptr, &curr_closest_bc, &curr_clos_point);
+                ray_origin, ray_direction, tri_ptr, &curr_closest_bc, &curr_clos_point);
             if (distance_right <= closest_distance) {
                 closest_distance = distance_right;
-                *closest_face = childR->idx;
+                *closest_face = child_right->idx;
                 *closestPoint = curr_clos_point;
                 *closest_bc = curr_closest_bc;
             }
         }
         // Query overlaps an internal node => traverse.
-        bool traverseL = (checkL && !childL->isLeaf());
-        bool traverseR = (checkR && !childR->isLeaf());
+        bool traverseL = (check_left && !child_left->isLeaf());
+        bool traverseR = (check_right && !child_right->isLeaf());
 
         if (!traverseL && !traverseR) {
-            node = *--stackPtr;  // pop
+            node = *--stack_ptr;  // pop
         } else {
-            node = (traverseL) ? childL : childR;
+            node = (traverseL) ? child_left : child_right;
             if (traverseL && traverseR) {
-                *stackPtr++ = childR;  // push
+                *stack_ptr++ = child_right;  // push
             }
         }
     } while (node != nullptr);
@@ -424,15 +425,16 @@ __device__ T rayTraverseBVHStack(const vec3<T> &queryPoint,
 }
 
 template <typename T, int StackSize = 32>
-__device__ T rayTraceBVHStack(const vec3<T> &queryPoint,
-                              const vec3<T> &rayDirection,
-                              const vec3<T> &rayInverse,
+__device__ T rayTraceBVHStack(const vec3<T> &ray_origin,
+                              const vec3<T> &ray_direction,
+                              const vec3<T> &ray_inverse,
                               BVHNodePtr<T> root,
-                              long *closest_face, vec3<T> *closest_bc,
+                              long *closest_face, 
+                              vec3<T> *closest_bc,
                               vec3<T> *closestPoint) {
     BVHNodePtr<T> stack[StackSize];  // TODO: what if the stack is full?
-    BVHNodePtr<T> *stackPtr = stack;
-    *stackPtr++ = nullptr;  // push (used as while loop exit)
+    BVHNodePtr<T> *stack_ptr = stack;
+    *stack_ptr++ = nullptr;  // push (used as while loop exit)
 
     BVHNodePtr<T> node = root;
     // Will never get updated if no intersection, returned as the max value
@@ -440,56 +442,56 @@ __device__ T rayTraceBVHStack(const vec3<T> &queryPoint,
 
     do {
         // Check each child node for overlap.
-        BVHNodePtr<T> childL = node->left;
-        BVHNodePtr<T> childR = node->right;
+        BVHNodePtr<T> child_left = node->left;
+        BVHNodePtr<T> child_right = node->right;
 
         // Ray and AABB only tests intersection or not
-        bool checkL = rayToAABBIntersect<T>(queryPoint, rayDirection, rayInverse, childL->bbox);
-        bool checkR = rayToAABBIntersect<T>(queryPoint, rayDirection, rayInverse, childR->bbox);
+        bool check_left = rayToAABBIntersect<T>(ray_origin, ray_direction, ray_inverse, child_left->bbox);
+        bool check_right = rayToAABBIntersect<T>(ray_origin, ray_direction, ray_inverse, child_right->bbox);
 
-        if (checkL && childL->isLeaf()) {
+        if (check_left && child_left->isLeaf()) {
             // If the child is a leaf then
-            TrianglePtr<T> tri_ptr = childL->tri_ptr;
+            TrianglePtr<T> tri_ptr = child_left->tri_ptr;
             vec3<T> curr_clos_point;
             vec3<T> curr_closest_bc;
 
             T t = rayToTriangleIntersect<T>(
-                queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
+                ray_origin, ray_direction, tri_ptr, &curr_closest_bc, &curr_clos_point);
             // Keeping track of the closest hit (when there're multiple hits)
             if (t > 0 && t < closest_distance) {
                 closest_distance = t;
-                *closest_face = childL->idx;
+                *closest_face = child_left->idx;
                 *closestPoint = curr_clos_point;
                 *closest_bc = curr_closest_bc;
             }
         }
 
-        if (checkR && childR->isLeaf()) {
+        if (check_right && child_right->isLeaf()) {
             // If the child is a leaf then
-            TrianglePtr<T> tri_ptr = childR->tri_ptr;
+            TrianglePtr<T> tri_ptr = child_right->tri_ptr;
             vec3<T> curr_clos_point;
             vec3<T> curr_closest_bc;
 
             T t = rayToTriangleIntersect<T>(
-                queryPoint, rayDirection, tri_ptr, &curr_closest_bc, &curr_clos_point);
+                ray_origin, ray_direction, tri_ptr, &curr_closest_bc, &curr_clos_point);
             // Keeping track of the closest hit (when there're multiple hits)
             if (t > 0 && t < closest_distance) {
                 closest_distance = t;
-                *closest_face = childR->idx;
+                *closest_face = child_right->idx;
                 *closestPoint = curr_clos_point;
                 *closest_bc = curr_closest_bc;
             }
         }
         // Query overlaps an internal node => traverse.
-        bool traverseL = (checkL && !childL->isLeaf());
-        bool traverseR = (checkR && !childR->isLeaf());
+        bool traverseL = (check_left && !child_left->isLeaf());
+        bool traverseR = (check_right && !child_right->isLeaf());
 
         if (!traverseL && !traverseR) {
-            node = *--stackPtr;  // pop
+            node = *--stack_ptr;  // pop
         } else {
-            node = (traverseL) ? childL : childR;
+            node = (traverseL) ? child_left : child_right;
             if (traverseL && traverseR) {
-                *stackPtr++ = childR;  // push
+                *stack_ptr++ = child_right;  // push
             }
         }
     } while (node != nullptr);
@@ -502,26 +504,26 @@ __device__ T traverseBVHStack(const vec3<T> &queryPoint, BVHNodePtr<T> root,
                               long *closest_face, vec3<T> *closest_bc,
                               vec3<T> *closestPoint) {
     BVHNodePtr<T> stack[StackSize];
-    BVHNodePtr<T> *stackPtr = stack;
-    *stackPtr++ = nullptr;  // push
+    BVHNodePtr<T> *stack_ptr = stack;
+    *stack_ptr++ = nullptr;  // push
 
     BVHNodePtr<T> node = root;
     T closest_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
 
     do {
         // Check each child node for overlap.
-        BVHNodePtr<T> childL = node->left;
-        BVHNodePtr<T> childR = node->right;
+        BVHNodePtr<T> child_left = node->left;
+        BVHNodePtr<T> child_right = node->right;
 
-        T distance_left = pointToAABBDistance<T>(queryPoint, childL->bbox);
-        T distance_right = pointToAABBDistance<T>(queryPoint, childR->bbox);
+        T distance_left = pointToAABBDistance<T>(queryPoint, child_left->bbox);
+        T distance_right = pointToAABBDistance<T>(queryPoint, child_right->bbox);
 
-        bool checkL = distance_left <= closest_distance;
-        bool checkR = distance_right <= closest_distance;
+        bool check_left = distance_left <= closest_distance;
+        bool check_right = distance_right <= closest_distance;
 
-        if (checkL && childL->isLeaf()) {
+        if (check_left && child_left->isLeaf()) {
             // If  the child is a leaf then
-            TrianglePtr<T> tri_ptr = childL->tri_ptr;
+            TrianglePtr<T> tri_ptr = child_left->tri_ptr;
             vec3<T> curr_clos_point;
             vec3<T> curr_closest_bc;
 
@@ -529,15 +531,15 @@ __device__ T traverseBVHStack(const vec3<T> &queryPoint, BVHNodePtr<T> root,
                 queryPoint, tri_ptr, &curr_closest_bc, &curr_clos_point);
             if (distance_left <= closest_distance) {
                 closest_distance = distance_left;
-                *closest_face = childL->idx;
+                *closest_face = child_left->idx;
                 *closestPoint = curr_clos_point;
                 *closest_bc = curr_closest_bc;
             }
         }
 
-        if (checkR && childR->isLeaf()) {
+        if (check_right && child_right->isLeaf()) {
             // If  the child is a leaf then
-            TrianglePtr<T> tri_ptr = childR->tri_ptr;
+            TrianglePtr<T> tri_ptr = child_right->tri_ptr;
             vec3<T> curr_clos_point;
             vec3<T> curr_closest_bc;
 
@@ -545,21 +547,21 @@ __device__ T traverseBVHStack(const vec3<T> &queryPoint, BVHNodePtr<T> root,
                 queryPoint, tri_ptr, &curr_closest_bc, &curr_clos_point);
             if (distance_right <= closest_distance) {
                 closest_distance = distance_right;
-                *closest_face = childR->idx;
+                *closest_face = child_right->idx;
                 *closestPoint = curr_clos_point;
                 *closest_bc = curr_closest_bc;
             }
         }
         // Query overlaps an internal node => traverse.
-        bool traverseL = (checkL && !childL->isLeaf());
-        bool traverseR = (checkR && !childR->isLeaf());
+        bool traverseL = (check_left && !child_left->isLeaf());
+        bool traverseR = (check_right && !child_right->isLeaf());
 
         if (!traverseL && !traverseR) {
-            node = *--stackPtr;  // pop
+            node = *--stack_ptr;  // pop
         } else {
-            node = (traverseL) ? childL : childR;
+            node = (traverseL) ? child_left : child_right;
             if (traverseL && traverseR) {
-                *stackPtr++ = childR;  // push
+                *stack_ptr++ = child_right;  // push
             }
         }
     } while (node != nullptr);
@@ -588,16 +590,16 @@ __device__ T traverseBVH(const vec3<T> &queryPoint, BVHNodePtr<T> root,
         node = output.second;
 
         // Check each child node for overlap.
-        BVHNodePtr<T> childL = node->left;
-        BVHNodePtr<T> childR = node->right;
+        BVHNodePtr<T> child_left = node->left;
+        BVHNodePtr<T> child_right = node->right;
 
-        T distance_left = pointToAABBDistance<T>(queryPoint, childL->bbox);
-        T distance_right = pointToAABBDistance<T>(queryPoint, childR->bbox);
+        T distance_left = pointToAABBDistance<T>(queryPoint, child_left->bbox);
+        T distance_right = pointToAABBDistance<T>(queryPoint, child_right->bbox);
 
         if (distance_left <= closest_distance) {
-            if (childL->isLeaf()) {
+            if (child_left->isLeaf()) {
                 // If  the child is a leaf then
-                TrianglePtr<T> tri_ptr = childL->tri_ptr;
+                TrianglePtr<T> tri_ptr = child_left->tri_ptr;
                 vec3<T> curr_clos_point;
                 vec3<T> curr_closest_bc;
 
@@ -605,19 +607,19 @@ __device__ T traverseBVH(const vec3<T> &queryPoint, BVHNodePtr<T> root,
                     queryPoint, tri_ptr, &curr_closest_bc, &curr_clos_point);
                 if (distance_left <= closest_distance) {
                     closest_distance = distance_left;
-                    *closest_face = childL->idx;
+                    *closest_face = child_left->idx;
                     *closestPoint = curr_clos_point;
                     *closest_bc = curr_closest_bc;
                 }
             } else {
-                queue.insert_key(distance_left, childL);
+                queue.insert_key(distance_left, child_left);
             }
         }
 
         if (distance_right <= closest_distance) {
-            if (childR->isLeaf()) {
+            if (child_right->isLeaf()) {
                 // If  the child is a leaf then
-                TrianglePtr<T> tri_ptr = childR->tri_ptr;
+                TrianglePtr<T> tri_ptr = child_right->tri_ptr;
                 vec3<T> curr_clos_point;
                 vec3<T> curr_closest_bc;
 
@@ -625,12 +627,12 @@ __device__ T traverseBVH(const vec3<T> &queryPoint, BVHNodePtr<T> root,
                     queryPoint, tri_ptr, &curr_closest_bc, &curr_clos_point);
                 if (distance_right <= closest_distance) {
                     closest_distance = distance_right;
-                    *closest_face = childR->idx;
+                    *closest_face = child_right->idx;
                     *closestPoint = curr_clos_point;
                     *closest_bc = curr_closest_bc;
                 }
             } else {
-                queue.insert_key(distance_right, childR);
+                queue.insert_key(distance_right, child_right);
             }
         }
     }
@@ -676,7 +678,7 @@ __global__ void findRayMeshNearestNeighbor(vec3<T> *query_points, vec3<T> *ray_d
         T max_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;  // threshold for intersection
         // MARK: When points are sorted by mortion, returns quicker, why? Terminates upon first few intersections?
         T closest_distance = rayTraverseBVHStack<T, QueueSize>(
-            query_point, ray_direction, root, &closest_face, &closest_bc, &closest_point);
+            query_point, ray_direction, ray_inverse, root, &closest_face, &closest_bc, &closest_point);
         if ((closest_distance > 0) && (closest_distance < max_distance)) {
             // intersection
             distances[idx] = closest_distance;
@@ -1370,32 +1372,32 @@ void bvh_ray_tracing_kernel(
                 cudaProfilerStart();
 #endif
                 if (queue_size == 32) {
-                    findRayMeshIntersection<scalar_t, 32><<<gridSize, NUM_THREADS>>>(
+                    findRayMeshNearestNeighbor<scalar_t, 32><<<gridSize, NUM_THREADS>>>(
                         points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                         closest_faces_ptr, closest_bcs_ptr,
                         internal_nodes.data().get(), num_points);
                 } else if (queue_size == 64) {
-                    findRayMeshIntersection<scalar_t, 64><<<gridSize, NUM_THREADS>>>(
+                    findRayMeshNearestNeighbor<scalar_t, 64><<<gridSize, NUM_THREADS>>>(
                         points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                         closest_faces_ptr, closest_bcs_ptr,
                         internal_nodes.data().get(), num_points);
                 } else if (queue_size == 128) {
-                    findRayMeshIntersection<scalar_t, 128><<<gridSize, NUM_THREADS>>>(
+                    findRayMeshNearestNeighbor<scalar_t, 128><<<gridSize, NUM_THREADS>>>(
                         points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                         closest_faces_ptr, closest_bcs_ptr,
                         internal_nodes.data().get(), num_points);
                 } else if (queue_size == 256) {
-                    findRayMeshIntersection<scalar_t, 256><<<gridSize, NUM_THREADS>>>(
+                    findRayMeshNearestNeighbor<scalar_t, 256><<<gridSize, NUM_THREADS>>>(
                         points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                         closest_faces_ptr, closest_bcs_ptr,
                         internal_nodes.data().get(), num_points);
                 } else if (queue_size == 512) {
-                    findRayMeshIntersection<scalar_t, 512><<<gridSize, NUM_THREADS>>>(
+                    findRayMeshNearestNeighbor<scalar_t, 512><<<gridSize, NUM_THREADS>>>(
                         points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                         closest_faces_ptr, closest_bcs_ptr,
                         internal_nodes.data().get(), num_points);
                 } else if (queue_size == 1024) {
-                    findRayMeshIntersection<scalar_t, 1024><<<gridSize, NUM_THREADS>>>(
+                    findRayMeshNearestNeighbor<scalar_t, 1024><<<gridSize, NUM_THREADS>>>(
                         points_ptr, directions_ptr, distances_ptr, closest_points_ptr,
                         closest_faces_ptr, closest_bcs_ptr,
                         internal_nodes.data().get(), num_points);

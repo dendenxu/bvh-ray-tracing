@@ -159,7 +159,7 @@ __forceinline__
 
 template <typename T>
 __forceinline__
-    __host__ __device__ float
+    __host__ __device__ T
     rayToAABBDistance(vec3<T> ray_origin, vec3<T> ray_direction, vec3<T> ray_inverse, const AABB<T> &bbox) {
     // remove invalid small values to avoid division by zero
     // how the heck are there sooooo many undebuggable bugs?
@@ -179,21 +179,22 @@ __forceinline__
     if (tmin.z < tmax.z) { int1.z = 0; t1.z = tmin.z; } 
     else { int1.z = 1; t1.z = tmax.z; }
 
-    if (tmin.x > tmax.x) { int1.x = 0; t2.x = tmin.x; } // end will use bbox.min_t.x
-    else { int1.x = 1; t2.x = tmax.x; }                 // end will use bbox.max_t.x
-    if (tmin.y > tmax.y) { int1.y = 0; t2.y = tmin.y; }
-    else { int1.y = 1; t2.y = tmax.y; }
-    if (tmin.z > tmax.z) { int1.z = 0; t2.z = tmin.z; }
-    else { int1.z = 1; t2.z = tmax.z; }
+    if (tmin.x > tmax.x) { int2.x = 0; t2.x = tmin.x; } // end will use bbox.min_t.x
+    else { int2.x = 1; t2.x = tmax.x; }                 // end will use bbox.max_t.x
+    if (tmin.y > tmax.y) { int2.y = 0; t2.y = tmin.y; }
+    else { int2.y = 1; t2.y = tmax.y; }
+    if (tmin.z > tmax.z) { int2.z = 0; t2.z = tmin.z; }
+    else { int2.z = 1; t2.z = tmax.z; }
     // clang-format on
 
     T near, far;
     near = max(max(t1.x, t1.y), t1.z);
     far = min(min(t2.x, t2.y), t2.z);
 
+    T squared_distance;
     bool intersected = near < far;
     if (intersected) {
-        T d2 = 0;
+        squared_distance = 0;
     } else {
         vec3<T> start, end;
         T t;
@@ -204,9 +205,9 @@ __forceinline__
         end.y = bbox.min_t.y ? int2.y : bbox.max_t.y;
         end.z = bbox.min_t.z ? int2.z : bbox.max_t.z;
         vec3<T> point = closest_point_on_segment(point, ray_direction, start, end, t);
-        T d2 = length_squared(ray_origin - point);
+        squared_distance = length_squared(ray_origin - point);
     }
-    return d2;
+    return squared_distance;
 }
 
 #endif  // ifndef AABB_H
