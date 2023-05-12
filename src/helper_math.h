@@ -1257,6 +1257,18 @@ inline __device__ __host__ uint4 clamp(uint4 v, uint4 a, uint4 b)
 // dot product
 ////////////////////////////////////////////////////////////////////////////////
 
+inline __host__ __device__ double dot(double2 a, double2 b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+inline __host__ __device__ double dot(double3 a, double3 b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+inline __host__ __device__ double dot(double4 a, double4 b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
 inline __host__ __device__ float dot(float2 a, float2 b)
 {
     return a.x * b.x + a.y * b.y;
@@ -1313,7 +1325,41 @@ inline __host__ __device__ float length(float4 v)
     return sqrtf(dot(v, v));
 }
 
+inline __host__ __device__ double length(double2 v)
+{
+    return sqrtf(dot(v, v));
+}
+inline __host__ __device__ double length(double3 v)
+{
+    return sqrtf(dot(v, v));
+}
+inline __host__ __device__ double length(double4 v)
+{
+    return sqrtf(dot(v, v));
+}
+
+inline __host__ __device__ float length_squared(float2 v)
+{
+    return dot(v, v);
+}
 inline __host__ __device__ float length_squared(float3 v)
+{
+    return dot(v, v);
+}
+inline __host__ __device__ float length_squared(float4 v)
+{
+    return dot(v, v);
+}
+
+inline __host__ __device__ double length_squared(double2 v)
+{
+    return dot(v, v);
+}
+inline __host__ __device__ double length_squared(double3 v)
+{
+    return dot(v, v);
+}
+inline __host__ __device__ double length_squared(double4 v)
 {
     return dot(v, v);
 }

@@ -204,7 +204,7 @@ __forceinline__
         end.x = bbox.min_t.x ? int2.x : bbox.max_t.x;
         end.y = bbox.min_t.y ? int2.y : bbox.max_t.y;
         end.z = bbox.min_t.z ? int2.z : bbox.max_t.z;
-        vec3<T> point = closest_point_on_segment(point, ray_direction, start, end, t);
+        vec3<T> point = closest_point_on_segment(ray_origin, ray_direction, start, end, t);
         squared_distance = length_squared(ray_origin - point);
     }
     return squared_distance;

@@ -64,13 +64,13 @@ inline __host__ __device__ double3 operator/(double3 a, double b) {
     return make_double3(a.x / b, a.y / b, a.z / b);
 }
 
-inline __host__ __device__ double dot(double2 a, double2 b) {
-    return a.x * b.x + a.y * b.y;
-}
+// inline __host__ __device__ double dot(double2 a, double2 b) {
+//     return a.x * b.x + a.y * b.y;
+// }
 
-inline __host__ __device__ double dot(double3 a, double3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
+// inline __host__ __device__ double dot(double3 a, double3 b) {
+//     return a.x * b.x + a.y * b.y + a.z * b.z;
+// }
 
 inline __host__ __device__ double3 cross(double3 a, double3 b)
 {
