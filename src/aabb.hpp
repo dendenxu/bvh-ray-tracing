@@ -113,19 +113,12 @@ __forceinline__
 template <typename T>
 __forceinline__
     __host__ __device__ bool
-    rayToAABBIntersect(vec3<T> point, vec3<T> direction, const AABB<T> &bbox) {
+    rayToAABBIntersect(vec3<T> point, vec3<T> direction, vec3<T> inverse, const AABB<T> &bbox) {
     // remove invalid small values to avoid division by zero
     // how the heck are there sooooo many undebuggable bugs?
-    vec3<T> dir = direction;
-    dir.x = ((dir.x > -EPSILON * EPSILON) && (dir.x < +EPSILON)) ? +EPSILON : dir.x;  // update the values on the fly to avoid strange nans
-    dir.x = ((dir.x < +EPSILON * EPSILON) && (dir.x > -EPSILON)) ? -EPSILON : dir.x;
-    dir.y = ((dir.y > -EPSILON * EPSILON) && (dir.y < +EPSILON)) ? +EPSILON : dir.y;
-    dir.y = ((dir.y < +EPSILON * EPSILON) && (dir.y > -EPSILON)) ? -EPSILON : dir.y;
-    dir.z = ((dir.z > -EPSILON * EPSILON) && (dir.z < +EPSILON)) ? +EPSILON : dir.z;
-    dir.z = ((dir.z < +EPSILON * EPSILON) && (dir.z > -EPSILON)) ? -EPSILON : dir.z;
 
-    vec3<T> tmin = (bbox.min_t - point) / dir;
-    vec3<T> tmax = (bbox.max_t - point) / dir;
+    vec3<T> tmin = (bbox.min_t - point) * inverse;
+    vec3<T> tmax = (bbox.max_t - point) * inverse;
     vec3<T> t1, t2;
     t1.x = min(tmin.x, tmax.x);
     t1.y = min(tmin.y, tmax.y);
@@ -140,6 +133,32 @@ __forceinline__
     far = min(min(t2.x, t2.y), t2.z);
 
     return near < far;
+}
+
+template <typename T>
+__forceinline__
+    __host__ __device__ bool
+    rayToAABBDistance(vec3<T> point, vec3<T> direction, vec3<T> inverse, const AABB<T> &bbox) {
+    // remove invalid small values to avoid division by zero
+    // how the heck are there sooooo many undebuggable bugs?
+    // TODO: precompute this and the ray direction inverse instead of everytime
+
+    vec3<T> tmin = (bbox.min_t - point) * inverse;
+    vec3<T> tmax = (bbox.max_t - point) * inverse;
+    vec3<T> t1, t2;
+    t1.x = min(tmin.x, tmax.x);
+    t1.y = min(tmin.y, tmax.y);
+    t1.z = min(tmin.z, tmax.z);
+
+    t2.x = max(tmin.x, tmax.x);
+    t2.y = max(tmin.y, tmax.y);
+    t2.z = max(tmin.z, tmax.z);
+
+    T near, far;
+    near = max(max(t1.x, t1.y), t1.z);
+    far = min(min(t2.x, t2.y), t2.z);
+
+    return near < far ? 0 : near; // TODO: Implement this
 }
 
 #endif  // ifndef AABB_H

@@ -119,6 +119,48 @@ struct is_valid_cnt : public thrust::unary_function<long2, int> {
 };
 
 template <typename T>
+__host__ __device__ T rayToTriangleDistance(
+    vec3<T> ori,  // starting point
+    vec3<T> dir,  // ray direction
+    TrianglePtr<T> tri_ptr,
+    vec3<T> *closest_bc,
+    vec3<T> *closest_point) {
+    // define convinient values
+    vec3<T> v0 = tri_ptr->v0;
+    vec3<T> v1 = tri_ptr->v1;
+    vec3<T> v2 = tri_ptr->v2;
+    vec3<T> edge1 = v1 - v0;
+    vec3<T> edge2 = v2 - v0;
+
+    // define temporary variable
+    // T u, v, t;
+    // T det, inv_det;
+    // vec3<T> avec, bvec, tvec;
+    // this this the third cuda moller trumbore implementation by now
+    vec3<T> tvec = ori - v0;
+    vec3<T> pvec = cross(dir, edge2);
+
+    T det = dot(edge1, pvec);
+    if (std::is_same<T, float>::value) {
+        det = __fdividef(1.0f, det);  // CUDA intrinsic function, faster math
+    } else {
+        det = 1.0 / det;
+    }
+    T u = dot(tvec, pvec) * det;
+    if (u < 0.0 || u > 1.0)
+        return -1.0;
+    vec3<T> qvec = cross(tvec, edge1);
+    T v = dot(dir, qvec) * det;
+    if (v < 0.0 || (u + v) > 1.0)
+        return -1.0;
+
+    // update only when the results are valid
+    *closest_point = v0 + u * edge1 + v * edge2;
+    *closest_bc = make_vec3<T>(static_cast<T>(1 - u - v), static_cast<T>(u), static_cast<T>(v));
+    return dot(edge2, qvec) * det;
+}
+
+template <typename T>
 __host__ __device__ T rayToTriangleIntersect(
     vec3<T> ori,  // starting point
     vec3<T> dir,  // ray direction
@@ -305,7 +347,83 @@ __device__
 }
 
 template <typename T, int StackSize = 32>
-__device__ T rayTraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirection, BVHNodePtr<T> root,
+__device__ T rayTraverseBVHStack(const vec3<T> &queryPoint,
+                                 const vec3<T> &rayDirection,
+                                 const vec3<T> &rayInverse,
+                                 BVHNodePtr<T> root,
+                                 long *closest_face, vec3<T> *closest_bc,
+                                 vec3<T> *closestPoint) {
+    BVHNodePtr<T> stack[StackSize];
+    BVHNodePtr<T> *stackPtr = stack;
+    *stackPtr++ = nullptr;  // push
+
+    BVHNodePtr<T> node = root;
+    T closest_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;
+
+    do {
+        // Check each child node for overlap.
+        BVHNodePtr<T> childL = node->left;
+        BVHNodePtr<T> childR = node->right;
+
+        T distance_left = rayToAABBDistance<T>(queryPoint, rayDirection, rayInverse, childL->bbox);
+        T distance_right = rayToAABBDistance<T>(queryPoint, rayDirection, rayInverse, childR->bbox);
+
+        bool checkL = distance_left <= closest_distance;
+        bool checkR = distance_right <= closest_distance;
+
+        if (checkL && childL->isLeaf()) {
+            // If  the child is a leaf then
+            TrianglePtr<T> tri_ptr = childL->tri_ptr;
+            vec3<T> curr_clos_point;
+            vec3<T> curr_closest_bc;
+
+            T distance_left = rayToTriangleDistance<T>(
+                queryPoint, tri_ptr, &curr_closest_bc, &curr_clos_point);
+            if (distance_left <= closest_distance) {
+                closest_distance = distance_left;
+                *closest_face = childL->idx;
+                *closestPoint = curr_clos_point;
+                *closest_bc = curr_closest_bc;
+            }
+        }
+
+        if (checkR && childR->isLeaf()) {
+            // If  the child is a leaf then
+            TrianglePtr<T> tri_ptr = childR->tri_ptr;
+            vec3<T> curr_clos_point;
+            vec3<T> curr_closest_bc;
+
+            T distance_right = rayToTriangleDistance<T>(
+                queryPoint, tri_ptr, &curr_closest_bc, &curr_clos_point);
+            if (distance_right <= closest_distance) {
+                closest_distance = distance_right;
+                *closest_face = childR->idx;
+                *closestPoint = curr_clos_point;
+                *closest_bc = curr_closest_bc;
+            }
+        }
+        // Query overlaps an internal node => traverse.
+        bool traverseL = (checkL && !childL->isLeaf());
+        bool traverseR = (checkR && !childR->isLeaf());
+
+        if (!traverseL && !traverseR) {
+            node = *--stackPtr;  // pop
+        } else {
+            node = (traverseL) ? childL : childR;
+            if (traverseL && traverseR) {
+                *stackPtr++ = childR;  // push
+            }
+        }
+    } while (node != nullptr);
+
+    return closest_distance;
+}
+
+template <typename T, int StackSize = 32>
+__device__ T rayTraceBVHStack(const vec3<T> &queryPoint,
+                              const vec3<T> &rayDirection,
+                              const vec3<T> &rayInverse,
+                              BVHNodePtr<T> root,
                               long *closest_face, vec3<T> *closest_bc,
                               vec3<T> *closestPoint) {
     BVHNodePtr<T> stack[StackSize];  // TODO: what if the stack is full?
@@ -322,8 +440,8 @@ __device__ T rayTraceBVHStack(const vec3<T> &queryPoint, const vec3<T> &rayDirec
         BVHNodePtr<T> childR = node->right;
 
         // Ray and AABB only tests intersection or not
-        bool checkL = rayToAABBIntersect<T>(queryPoint, rayDirection, childL->bbox);
-        bool checkR = rayToAABBIntersect<T>(queryPoint, rayDirection, childR->bbox);
+        bool checkL = rayToAABBIntersect<T>(queryPoint, rayDirection, rayInverse, childL->bbox);
+        bool checkR = rayToAABBIntersect<T>(queryPoint, rayDirection, rayInverse, childR->bbox);
 
         if (checkL && childL->isLeaf()) {
             // If the child is a leaf then
@@ -517,7 +635,65 @@ __device__ T traverseBVH(const vec3<T> &queryPoint, BVHNodePtr<T> root,
 }
 
 template <typename T, int QueueSize = 32>
-__global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_directions,
+__global__ void findRayMeshNearestNeighbor(vec3<T> *query_points, vec3<T> *ray_directions,
+                                           T *distances,
+                                           vec3<T> *closest_points,
+                                           long *closest_faces,
+                                           vec3<T> *closest_bcs,
+                                           BVHNodePtr<T> root, int num_points) {
+    for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < num_points;
+         idx += blockDim.x * gridDim.x) {
+        vec3<T> query_point = query_points[idx];
+        vec3<T> ray_direction = ray_directions[idx];
+        vec3<T> ray_inverse;
+
+        ray_direction.x = ((ray_direction.x > -EPSILON * EPSILON) && (ray_direction.x < +EPSILON)) ? +EPSILON : ray_direction.x;  // update the values on the fly to avoid strange nans
+        ray_direction.x = ((ray_direction.x < +EPSILON * EPSILON) && (ray_direction.x > -EPSILON)) ? -EPSILON : ray_direction.x;
+        ray_direction.y = ((ray_direction.y > -EPSILON * EPSILON) && (ray_direction.y < +EPSILON)) ? +EPSILON : ray_direction.y;
+        ray_direction.y = ((ray_direction.y < +EPSILON * EPSILON) && (ray_direction.y > -EPSILON)) ? -EPSILON : ray_direction.y;
+        ray_direction.z = ((ray_direction.z > -EPSILON * EPSILON) && (ray_direction.z < +EPSILON)) ? +EPSILON : ray_direction.z;
+        ray_direction.z = ((ray_direction.z < +EPSILON * EPSILON) && (ray_direction.z > -EPSILON)) ? -EPSILON : ray_direction.z;
+
+        if (std::is_same<T, float>::value) {
+            ray_inverse.x = __fdividef(1.0f, ray_direction.x);  // CUDA intrinsic function, faster math
+            ray_inverse.y = __fdividef(1.0f, ray_direction.y);  // CUDA intrinsic function, faster math
+            ray_inverse.z = __fdividef(1.0f, ray_direction.z);  // CUDA intrinsic function, faster math
+        } else {
+            ray_inverse.x = 1.0 / ray_direction.x;
+            ray_inverse.y = 1.0 / ray_direction.y;
+            ray_inverse.z = 1.0 / ray_direction.z;
+        }
+
+        long closest_face;
+        vec3<T> closest_bc;
+        vec3<T> closest_point;
+
+        // MARK: Never define a macro for this, will not evaluate to the values desired, strange...
+        T max_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;  // threshold for intersection
+        // MARK: When points are sorted by mortion, returns quicker, why? Terminates upon first few intersections?
+        T closest_distance = rayTraverseBVHStack<T, QueueSize>(
+            query_point, ray_direction, root, &closest_face, &closest_bc, &closest_point);
+        if ((closest_distance > 0) && (closest_distance < max_distance)) {
+            // intersection
+            distances[idx] = closest_distance;
+            closest_points[idx] = closest_point;
+            closest_faces[idx] = closest_face;
+            closest_bcs[idx] = closest_bc;
+        } else {
+            // no intersection
+            // MARK: When sorting points by morton, always get this, why?
+            distances[idx] = -1;
+            closest_points[idx] = make_vec3<T>(0, 0, 0);
+            closest_faces[idx] = -1;
+            closest_bcs[idx] = make_vec3<T>(0, 0, 0);
+        }
+    }
+    return;
+}
+
+template <typename T, int QueueSize = 32>
+__global__ void findRayMeshIntersection(vec3<T> *query_points,
+                                        vec3<T> *ray_directions,
                                         T *distances,
                                         vec3<T> *closest_points,
                                         long *closest_faces,
@@ -527,7 +703,24 @@ __global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_dire
          idx += blockDim.x * gridDim.x) {
         vec3<T> query_point = query_points[idx];
         vec3<T> ray_direction = ray_directions[idx];
+        vec3<T> ray_inverse;
 
+        ray_direction.x = ((ray_direction.x > -EPSILON * EPSILON) && (ray_direction.x < +EPSILON)) ? +EPSILON : ray_direction.x;  // update the values on the fly to avoid strange nans
+        ray_direction.x = ((ray_direction.x < +EPSILON * EPSILON) && (ray_direction.x > -EPSILON)) ? -EPSILON : ray_direction.x;
+        ray_direction.y = ((ray_direction.y > -EPSILON * EPSILON) && (ray_direction.y < +EPSILON)) ? +EPSILON : ray_direction.y;
+        ray_direction.y = ((ray_direction.y < +EPSILON * EPSILON) && (ray_direction.y > -EPSILON)) ? -EPSILON : ray_direction.y;
+        ray_direction.z = ((ray_direction.z > -EPSILON * EPSILON) && (ray_direction.z < +EPSILON)) ? +EPSILON : ray_direction.z;
+        ray_direction.z = ((ray_direction.z < +EPSILON * EPSILON) && (ray_direction.z > -EPSILON)) ? -EPSILON : ray_direction.z;
+
+        if (std::is_same<T, float>::value) {
+            ray_inverse.x = __fdividef(1.0f, ray_direction.x);  // CUDA intrinsic function, faster math
+            ray_inverse.y = __fdividef(1.0f, ray_direction.y);  // CUDA intrinsic function, faster math
+            ray_inverse.z = __fdividef(1.0f, ray_direction.z);  // CUDA intrinsic function, faster math
+        } else {
+            ray_inverse.x = 1.0 / ray_direction.x;
+            ray_inverse.y = 1.0 / ray_direction.y;
+            ray_inverse.z = 1.0 / ray_direction.z;
+        }
         long closest_face;
         vec3<T> closest_bc;
         vec3<T> closest_point;
@@ -536,7 +729,7 @@ __global__ void findRayMeshIntersection(vec3<T> *query_points, vec3<T> *ray_dire
         T max_distance = std::is_same<T, float>::value ? FLT_MAX : DBL_MAX;  // threshold for intersection
         // MARK: When points are sorted by mortion, returns quicker, why? Terminates upon first few intersections?
         T closest_distance = rayTraceBVHStack<T, QueueSize>(
-            query_point, ray_direction, root, &closest_face, &closest_bc, &closest_point);
+            query_point, ray_direction, ray_inverse, root, &closest_face, &closest_bc, &closest_point);
         if ((closest_distance > 0) && (closest_distance < max_distance)) {
             // intersection
             distances[idx] = closest_distance;
