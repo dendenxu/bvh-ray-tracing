@@ -120,44 +120,54 @@ struct is_valid_cnt : public thrust::unary_function<long2, int> {
 
 template <typename T>
 __host__ __device__ T rayToTriangleDistance(
-    vec3<T> ori,  // starting point
-    vec3<T> dir,  // ray direction
-    TrianglePtr<T> tri_ptr,
-    vec3<T> *closest_bc,
-    vec3<T> *closest_point) {
-    // define convinient values
-    vec3<T> v0 = tri_ptr->v0;
-    vec3<T> v1 = tri_ptr->v1;
-    vec3<T> v2 = tri_ptr->v2;
-    vec3<T> edge1 = v1 - v0;
-    vec3<T> edge2 = v2 - v0;
+    vec3<T> ray_origin,     // starting point
+    vec3<T> ray_direction,  // ray direction
+    TrianglePtr<T> triangle,
+    vec3<T> *barycentric,
+    vec3<T> *point) {
+    vec3<T> u = triangle->v1 - triangle->v0;
+    vec3<T> v = triangle->v2 - triangle->v0;
+    vec3<T> normal = cross(u, v);
+    T squared_distance;
+    T normal_len = length(normal);
+    normal /= normal_len;
 
-    // define temporary variable
-    // T u, v, t;
-    // T det, inv_det;
-    // vec3<T> avec, bvec, tvec;
-    // this this the third cuda moller trumbore implementation by now
-    vec3<T> tvec = ori - v0;
-    vec3<T> pvec = cross(dir, edge2);
+    T t = dot(normal, triangle->v0 - ray_origin) / dot(normal, ray_direction);
+    vec3<T> p = ray_origin + t * ray_direction;  // intersection point
 
-    T det = dot(edge1, pvec);
-    if (std::is_same<T, float>::value) {
-        det = __fdividef(1.0f, det);  // CUDA intrinsic function, faster math
-    } else {
-        det = 1.0 / det;
+    // check if the intersection point is inside the triangle
+    vec3<T> c = cross(triangle->v1 - p, triangle->v0 - p);
+    if (dot(normal, c) < 0) {
+        T t;
+        point = closest_point_on_segment(ray_origin, ray_direction, triangle->v0, triangle->v1, t);
+        squared_distance = length_squared(ray_origin - point);
+        barycentric = make_vec3<T>(1 - t, t, 0);
+        return;
     }
-    T u = dot(tvec, pvec) * det;
-    if (u < 0.0 || u > 1.0)
-        return -1.0;
-    vec3<T> qvec = cross(tvec, edge1);
-    T v = dot(dir, qvec) * det;
-    if (v < 0.0 || (u + v) > 1.0)
-        return -1.0;
 
-    // update only when the results are valid
-    *closest_point = v0 + u * edge1 + v * edge2;
-    *closest_bc = make_vec3<T>(static_cast<T>(1 - u - v), static_cast<T>(u), static_cast<T>(v));
-    return dot(edge2, qvec) * det;
+    c = cross(triangle->v2 - p, triangle->v1 - p);
+    if (dot(normal, c) < 0) {
+        T t;
+        point = closest_point_on_segment(ray_origin, ray_direction, triangle->v1, triangle->v2, t);
+        squared_distance = length_squared(ray_origin - point);
+        barycentric = make_vec3<T>(0, 1 - t, t);
+        return;
+    }
+
+    c = cross(triangle->v0 - p, triangle->v2 - p);
+    if (dot(normal, c) < 0) {
+        T t;
+        point = closest_point_on_segment(ray_origin, ray_direction, triangle->v0, triangle->v2, t);
+        squared_distance = length_squared(ray_origin - point);
+        barycentric = make_vec3<T>(t, 0, 1 - t);
+        return;
+    }
+
+    // the intersection point is inside the triangle
+    point = p;
+    squared_distance = 0;  // has intersection, will use this trangle
+    barycentric = make_vec3<T>(dot(u, c) / normal_len, dot(v, c) / normal_len, 1 - dot(u, c) / normal_len - dot(v, c) / normal_len);
+    return squared_distance;
 }
 
 template <typename T>
@@ -175,10 +185,6 @@ __host__ __device__ T rayToTriangleIntersect(
     vec3<T> edge2 = v2 - v0;
 
     // define temporary variable
-    // T u, v, t;
-    // T det, inv_det;
-    // vec3<T> avec, bvec, tvec;
-    // this this the third cuda moller trumbore implementation by now
     vec3<T> tvec = ori - v0;
     vec3<T> pvec = cross(dir, edge2);
 
@@ -189,12 +195,10 @@ __host__ __device__ T rayToTriangleIntersect(
         det = 1.0 / det;
     }
     T u = dot(tvec, pvec) * det;
-    if (u < 0.0 || u > 1.0)
-        return -1.0;
+    if (u < 0.0 || u > 1.0) return -1.0;
     vec3<T> qvec = cross(tvec, edge1);
     T v = dot(dir, qvec) * det;
-    if (v < 0.0 || (u + v) > 1.0)
-        return -1.0;
+    if (v < 0.0 || (u + v) > 1.0) return -1.0;
 
     // update only when the results are valid
     *closest_point = v0 + u * edge1 + v * edge2;
