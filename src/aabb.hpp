@@ -138,7 +138,7 @@ __forceinline__
 template <typename T>
 __forceinline__
     __host__ __device__ vec3<T>
-    closest_point_on_segment(vec3<T> ray_origin, vec3<T> ray_direction, vec3<T> seg_start, vec3<T> seg_end, T &t) {
+    closest_point_on_segment(vec3<T> ray_origin, vec3<T> ray_direction, vec3<T> seg_start, vec3<T> seg_end, vec3<T> &seg_point, vec3<T> ray_point, &T t) {
     vec3<T> seg_direction = seg_end - seg_start;
     vec3<T> origin_diff = ray_origin - seg_start;
 
@@ -149,12 +149,17 @@ __forceinline__
     T e = dot(seg_direction, origin_diff);
 
     T denom = a * c - b * b;
-    t = (b * e - c * d) / denom;
+    T t1 = (b * e - c * d) / denom;
+    T t2 = (a * e - b * d) / denom;
 
-    // Clamp t to [0, 1] for segment
-    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    // Clamp t2 to [0, 1] for segment
+    t2 = t2 < 0 ? 0 : (t2 > 1 ? 1 : t2);
+    t1 = max(0.0, t1);
+    t = t2; // on segment
 
-    return seg_start + t * seg_direction;
+    vec3<T> seg_point = seg_start + t2 * seg_direction;
+    vec3<T> ray_point = ray_origin + t1 * ray_direction;
+    return length_squared(seg_point - ray_point);
 }
 
 template <typename T>
@@ -197,6 +202,7 @@ __forceinline__
         squared_distance = 0;
     } else {
         vec3<T> start, end;
+        vec3<T> ray_point, seg_point;
         T t;
         start.x = bbox.max_t.x ? int1.x : bbox.min_t.x;
         start.y = bbox.max_t.y ? int1.y : bbox.min_t.y;
@@ -204,8 +210,7 @@ __forceinline__
         end.x = bbox.min_t.x ? int2.x : bbox.max_t.x;
         end.y = bbox.min_t.y ? int2.y : bbox.max_t.y;
         end.z = bbox.min_t.z ? int2.z : bbox.max_t.z;
-        vec3<T> point = closest_point_on_segment(ray_origin, ray_direction, start, end, t);
-        squared_distance = length_squared(ray_origin - point);
+        squared_distance = closest_point_on_segment(ray_origin, ray_direction, start, end, ray_point, seg_point, t);
     }
     return squared_distance;
 }

@@ -142,7 +142,8 @@ __host__ __device__ T rayToTriangleDistance(
     vec3<T> c = cross(triangle->v1 - p, triangle->v0 - p);
     if (dot(normal, c) < 0) {
         T t;
-        *point = closest_point_on_segment(ray_origin, ray_direction, triangle->v0, triangle->v1, t);
+        vec3<T> ray_point;
+        squared_distance = closest_point_on_segment(ray_origin, ray_direction, triangle->v0, triangle->v1, ray_point, *point, t);
         *barycentric = make_vec3<T>(1 - t, t, 0);
         squared_distance = length_squared(ray_origin - *point);
         return squared_distance;
@@ -151,18 +152,18 @@ __host__ __device__ T rayToTriangleDistance(
     c = cross(triangle->v2 - p, triangle->v1 - p);
     if (dot(normal, c) < 0) {
         T t;
-        *point = closest_point_on_segment(ray_origin, ray_direction, triangle->v1, triangle->v2, t);
+        vec3<T> ray_point;
+        squared_distance = closest_point_on_segment(ray_origin, ray_direction, triangle->v1, triangle->v2, ray_point, *point, t);
         *barycentric = make_vec3<T>(0, 1 - t, t);
-        squared_distance = length_squared(ray_origin - *point);
         return squared_distance;
     }
 
     c = cross(triangle->v0 - p, triangle->v2 - p);
     if (dot(normal, c) < 0) {
         T t;
-        *point = closest_point_on_segment(ray_origin, ray_direction, triangle->v0, triangle->v2, t);
+        vec3<T> ray_point;
+        squared_distance = closest_point_on_segment(ray_origin, ray_direction, triangle->v0, triangle->v2, ray_point, *point, t);
         *barycentric = make_vec3<T>(t, 0, 1 - t);
-        squared_distance = length_squared(ray_origin - *point);
         return squared_distance;
     }
 
