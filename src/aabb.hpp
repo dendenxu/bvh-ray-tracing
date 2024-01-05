@@ -137,8 +137,14 @@ __forceinline__
 
 template <typename T>
 __forceinline__
-    __host__ __device__ vec3<T>
-    closest_point_on_segment(vec3<T> ray_origin, vec3<T> ray_direction, vec3<T> seg_start, vec3<T> seg_end, vec3<T> &seg_point, vec3<T> ray_point, &T t) {
+    __host__ __device__ T
+    closest_point_on_segment(vec3<T> ray_origin,
+                             vec3<T> ray_direction,
+                             vec3<T> seg_start,
+                             vec3<T> seg_end,
+                             vec3<T> &ray_point,
+                             vec3<T> &seg_point,
+                             T &t) {
     vec3<T> seg_direction = seg_end - seg_start;
     vec3<T> origin_diff = ray_origin - seg_start;
 
@@ -155,10 +161,10 @@ __forceinline__
     // Clamp t2 to [0, 1] for segment
     t2 = t2 < 0 ? 0 : (t2 > 1 ? 1 : t2);
     t1 = max(0.0, t1);
-    t = t2; // on segment
+    t = t2;  // on segment
 
-    vec3<T> seg_point = seg_start + t2 * seg_direction;
-    vec3<T> ray_point = ray_origin + t1 * ray_direction;
+    seg_point = seg_start + t2 * seg_direction;
+    ray_point = ray_origin + t1 * ray_direction;
     return length_squared(seg_point - ray_point);
 }
 
